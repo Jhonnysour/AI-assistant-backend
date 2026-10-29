@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-assistant-backend"
+version = "0.0.1"
+description = "Backend del asistente personal (prueba de viabilidad del proveedor)."
+requires-python = ">=3.12"
+# Versiones consultadas en PyPI el 2026-10-29.
+dependencies = [
+    "httpx==0.28.1",
+    "PyJWT[crypto]==2.15.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.2.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -14,14 +14,17 @@ Consultar la documentación oficial vigente del proveedor antes de implementar a
 Probar el flujo autorizado para usar la cuenta del usuario, consultar el catálogo y obtener una respuesta.
 No asumir que todos los modelos del producto web están expuestos a la integración.
 No reutilizar cookies ni extraer credenciales de extensiones.
-Registrar el resultado y los límites encontrados; la prueba no se ha ejecutado todavía.
+Registrar el resultado y los límites encontrados en la
+[evidencia](../evidence/001-viabilidad-proveedor.md). La prueba está implementada
+([desarrollo](../development.md#prueba-real-con-la-cuenta-manual)) y se ejecutó con éxito el 2026-10-29.
 Si la cuenta no es elegible, documentar el bloqueo y acordar la alternativa de facturación:
 no cambiar automáticamente a una API de pago. El desarrollo con un proveedor simulado puede continuar.
 
 ## Comportamiento
 
 - Una conversación temporal y un envío activo por conversación.
-- El selector muestra los modelos realmente autorizados cuando el proveedor permita consultarlos.
+- El selector muestra los modelos que ofrece el catálogo y distingue los de acceso comprobado (una
+  petición terminada en `response.completed`). El catálogo por sí solo no garantiza acceso.
 - Se rechazan mensajes vacíos sin llamar al proveedor.
 - Tras enviar: el usuario ve su mensaje y un indicador de actividad.
 - Los fragmentos recibidos actualizan la respuesta sin bloquear la interfaz.
@@ -50,8 +53,9 @@ no cambiar automáticamente a una API de pago. El desarrollo con un proveedor si
 
 ## Plan propuesto y tareas
 
-- [ ] Revisar la especificación y registrar decisiones pendientes relevantes.
-- [ ] Ejecutar la prueba de autenticación y catálogo; registrar resultado.
+- [x] Revisar la especificación y registrar decisiones pendientes relevantes (2026-10-29, en la evidencia).
+- [x] Ejecutar la prueba de autenticación y catálogo; registrar resultado (2026-10-29: `completed`
+  con `gpt-6-luna`; ver la evidencia).
 - [ ] Definir contrato de chat, streaming, error y cancelación; elegir transporte y formato.
 - [ ] Crear esqueleto hexagonal y proveedor simulado.
 - [ ] Implementar el caso de uso y pruebas de AC-01, AC-04 a AC-07 y AC-09.

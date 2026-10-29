@@ -23,9 +23,47 @@ La ejecución programada puede ser otro proceso del mismo proyecto; no implica m
 ## Primera entrega
 
 Un caso de uso para conversar, un puerto de proveedor y un adaptador inicialmente validado.
+Proveedor inicial: OpenAI mediante Sign in with ChatGPT (uso del plan). Su viabilidad se comprobó el
+2026-10-29 ([evidencia](evidence/001-viabilidad-proveedor.md)).
 Streaming con eventos de progreso, finalización y error. Credenciales fuera de la UI y de los logs.
 El contrato HTTP se define antes de integrar desktop y se versiona en este repositorio.
 No hace falta una base de datos hasta implementar persistencia; la sesión inicial puede ser temporal.
+
+## Despliegue y red
+
+- Desktop y mobile se comunican solo con la API de este backend. No llaman al proveedor ni a la base
+  de datos, y nunca reciben credenciales del proveedor.
+- Una vez desplegado en el VPS (Ubuntu con Coolify), es el backend quien llama al proveedor desde el
+  VPS. En desarrollo las llamadas salen desde el PC a través del proxy local.
+- Los ajustes de red (proxy, `NO_PROXY`, puerto del callback OAuth) son configuración
+  ([config.py](../src/ai_assistant/config.py)) e infraestructura
+  ([infrastructure/http.py](../src/ai_assistant/infrastructure/http.py)). Los adaptadores reciben un
+  cliente HTTP ya configurado; dominio y aplicación no conocen proxies ni URLs.
+- Los secretos del proveedor se guardan cifrados en el host que los usa
+  ([desarrollo](development.md#datos-locales-y-credenciales)). Las condiciones pendientes para el VPS
+  están en la [evidencia](evidence/001-viabilidad-proveedor.md#despliegue-en-el-vps-pendiente).
+
+## Modelos: ofrecidos frente a comprobados
+
+- **Ofrecido:** aparece en el catálogo del proveedor (`GET /v1/models`, `visibility == "list"`). No
+  garantiza acceso.
+- **Acceso comprobado:** una petición con esa cuenta y ese modelo terminó en `response.completed`. Se
+  registra por registro de cliente y con fecha. `failed`, `incomplete` o un corte no cuentan.
+
+## Código actual (prueba de viabilidad)
+
+```
+src/ai_assistant/
+  config.py                         # composición: lectura del entorno
+  infrastructure/http.py            # cliente httpx con proxy explícito
+  infrastructure/secret_store.py    # archivo cifrado (DPAPI en Windows)
+  conversations/adapters/outbound/chatgpt_plan/
+    oauth.py  credentials.py  responses.py
+  probe.py                          # CLI temporal: raíz de composición de la prueba
+```
+
+Todavía no hay dominio, puerto ni caso de uso. Se crearán junto con el contrato de streaming y el
+proveedor simulado. El adaptador está aislado para implementar ese puerto sin reescribirse.
 
 ## Evolución
 
