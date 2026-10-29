@@ -50,20 +50,38 @@ No hace falta una base de datos hasta implementar persistencia; la sesión inici
 - **Acceso comprobado:** una petición con esa cuenta y ese modelo terminó en `response.completed`. Se
   registra por registro de cliente y con fecha. `failed`, `incomplete` o un corte no cuentan.
 
-## Código actual (prueba de viabilidad)
+## Código actual
 
 ```
 src/ai_assistant/
-  config.py                         # composición: lectura del entorno
-  infrastructure/http.py            # cliente httpx con proxy explícito
-  infrastructure/secret_store.py    # archivo cifrado (DPAPI en Windows)
-  conversations/adapters/outbound/chatgpt_plan/
-    oauth.py  credentials.py  responses.py
-  probe.py                          # CLI temporal: raíz de composición de la prueba
+  config.py                          # composición: lectura del entorno
+  infrastructure/http.py             # clientes httpx (síncrono y asíncrono) con proxy explícito
+  infrastructure/secret_store.py     # archivo cifrado (DPAPI en Windows)
+  conversations/
+    domain/model.py                  # Conversation, UserMessage, AssistantResponse, estados y reglas
+    application/ports.py             # ChatProvider (async), ConversationRepository, eventos del proveedor
+    application/chat.py              # ChatService/Turn: enviar, flujo de eventos y cancelación
+    adapters/outbound/
+      in_memory_repository.py        # sesión temporal
+      fake_provider.py               # proveedor simulado (pruebas y desarrollo de clientes)
+      chatgpt_plan/                  # proveedor real: oauth, credentials, session, responses, provider
+  probe.py                           # CLI de la prueba de viabilidad
 ```
 
-Todavía no hay dominio, puerto ni caso de uso. Se crearán junto con el contrato de streaming y el
-proveedor simulado. El adaptador está aislado para implementar ese puerto sin reescribirse.
+- El contrato hacia los clientes está en [api/chat-v1.md](api/chat-v1.md) y usa SSE.
+- El modelo del chat (entidades, estados e invariantes) está acordado en
+  [domain/conversations.md](domain/conversations.md).
+- El núcleo es **asíncrono** (asyncio, de la biblioteca estándar). El caso de uso consume el proveedor
+  en una tarea propia por turno; cancelar marca `cancelled` y libera la conversación en el acto,
+  interrumpe la espera de red y descarta lo que llegue después
+  ([sección 8 del modelo](domain/conversations.md#8-cancelación)).
+- El caso de uso no reintenta. "Un envío activo" es atómico porque el servicio corre en un único
+  bucle asyncio; con persistencia, esa garantía pasará al repositorio.
+- El adaptador real hace el streaming con `httpx.AsyncClient`. La renovación de tokens reutiliza el
+  flujo OAuth síncrono de la CLI en un hilo aparte (`asyncio.to_thread`).
+- Los fallos propios del backend se registran con `logging` (solo tipo y líneas de código, sin
+  mensajes, tokens ni texto del usuario) y se comunican como `internal_error`.
+- Falta el adaptador de entrada HTTP (FastAPI) y su raíz de composición.
 
 ## Evolución
 

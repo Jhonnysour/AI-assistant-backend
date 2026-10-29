@@ -34,6 +34,7 @@ def use_provider(monkeypatch, ctx, handler, calls):
         calls.append(request)
         return handler(request)
     monkeypatch.setattr(ctx, "http", lambda: httpx.Client(transport=httpx.MockTransport(counting)))
+    monkeypatch.setattr(ctx, "async_http", lambda: httpx.AsyncClient(transport=httpx.MockTransport(counting)))
     monkeypatch.setattr(probe, "Context", lambda settings: ctx)
 
 

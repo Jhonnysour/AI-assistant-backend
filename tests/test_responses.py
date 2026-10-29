@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import httpx
@@ -27,8 +28,14 @@ def run(body: bytes, status: int = 200, seen: dict | None = None):
         headers = {"content-type": "text/event-stream"} if status == 200 else {}
         return httpx.Response(status, content=body, headers=headers)
 
-    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
-        return list(responses.stream_response(http, TOKEN, "model-a", "Hola"))
+    return stream(httpx.MockTransport(handler), "model-a", [{"role": "user", "content": "Hola"}])
+
+
+def stream(transport, model, items):
+    async def go():
+        async with httpx.AsyncClient(transport=transport) as http:
+            return [event async for event in responses.stream_response(http, TOKEN, model, items)]
+    return asyncio.run(go())
 
 
 def test_parse_sse_groups_lines_and_ignores_comments():
@@ -62,17 +69,29 @@ def test_stream_cut_without_terminal_event_is_interrupted():
 
 
 def test_transport_failure_mid_stream_is_interrupted():
-    class Broken(httpx.SyncByteStream):
-        def __iter__(self):
-            yield sse(delta("parcial"))
+    class Broken(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield sse({"type": "response.created", "response": {"model": "m-1"}}, delta("parcial"))
             raise httpx.ReadError("conexión cortada")
 
     def handler(request):
         return httpx.Response(200, stream=Broken(), headers={"content-type": "text/event-stream"})
 
-    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
-        events = list(responses.stream_response(http, TOKEN, "m", "hola"))
-    assert events == [TextDelta("parcial"), StreamOutcome("interrupted", "ReadError")]
+    events = stream(httpx.MockTransport(handler), "m", [{"role": "user", "content": "hola"}])
+    assert events == [TextDelta("parcial"), StreamOutcome("interrupted", "ReadError", model="m-1")]
+
+
+def test_reported_model_is_attached_to_the_outcome():
+    events = run(sse({"type": "response.created", "response": {"model": "gpt-6-luna"}}, delta("ok"),
+                     {"type": "response.completed", "response": {"model": "gpt-6-luna"}}))
+    assert events == [TextDelta("ok"), StreamOutcome("completed", model="gpt-6-luna")]
+    assert run(sse(delta("ok"), {"type": "response.completed"}))[-1].model is None
+
+
+def test_interpret_events_stops_at_done_marker():
+    events = list(responses.interpret_events([(None, json.dumps(delta("a"))), (None, "[DONE]"),
+                                              (None, json.dumps(delta("b")))]))
+    assert events == [TextDelta("a"), StreamOutcome("interrupted", "stream_ended_without_completion")]
 
 
 def test_request_follows_plan_route_requirements():

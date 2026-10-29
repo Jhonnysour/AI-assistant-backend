@@ -1,8 +1,9 @@
 # AI Assistant Backend
 
 Backend propuesto en Python y FastAPI, con arquitectura hexagonal y PostgreSQL.
-Estado: prueba de viabilidad del proveedor superada el 2026-10-29 (login, catálogo y `response.completed`
-con la cuenta real). Todavía no hay API HTTP, FastAPI ni base de datos.
+Estado: la prueba de viabilidad del proveedor se superó el 2026-10-29. El núcleo de chat ya existe
+(dominio, caso de uso asíncrono, proveedor simulado y proveedor real), y el modelo del chat y el
+contrato SSE están acordados. Todavía no hay API HTTP (FastAPI) ni base de datos.
 
 ## Lectura inicial
 
@@ -12,6 +13,8 @@ con la cuenta real). Todavía no hay API HTTP, FastAPI ni base de datos.
 4. [Instrucciones de trabajo](AGENTS.md)
 5. [Desarrollo local, proxy y comandos](docs/development.md)
 6. [Evidencia de la prueba del proveedor](docs/evidence/001-viabilidad-proveedor.md)
+7. [Contrato de chat v1 (SSE)](docs/api/chat-v1.md)
+8. [Modelo del chat de SPEC-001](docs/domain/conversations.md)
 
 Este repositorio alberga también la documentación compartida del producto.
 La primera entrega se desarrolla localmente; Coolify se incorpora cuando exista un flujo verificable.

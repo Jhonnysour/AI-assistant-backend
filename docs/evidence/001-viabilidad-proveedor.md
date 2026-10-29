@@ -56,6 +56,33 @@ conceda `chatgpt.tokens.use.direct` y que una petición termine en `response.com
 | Modelos con acceso comprobado | `gpt-6-luna`. El resto del catálogo sigue sin comprobar. |
 | Credenciales | Guardadas cifradas con DPAPI fuera del repositorio; ningún token en la salida ni en Git. |
 
+### 2026-10-29 · conversación de dos turnos a través del caso de uso
+
+Ejecutada por el agente con la sesión ya guardada: `ChatService` + `ChatGptPlanProvider` + `gpt-6-luna`,
+vía proxy.
+
+| Turno | Resultado |
+| --- | --- |
+| "Recuerda la palabra clave: naranja. Responde solo: OK" | `OK`, `response.completed` |
+| "¿Cuál era la palabra clave? Responde solo con la palabra." | `naranja`, `response.completed` |
+
+El historial con mensajes `assistant` en `input` (con `store: false`) se acepta y el modelo lo usa.
+
+### 2026-10-29 · modelo informado por el proveedor (R2 del modelo del chat)
+
+Ejecutada por el usuario con un script temporal fuera del repositorio que solo imprimía tipos de
+evento y campos `model`. Petición `gpt-6-luna`, "Responde solo: ok", vía proxy: HTTP 200.
+
+| Evento | `response.model` |
+| --- | --- |
+| `response.created`, `response.in_progress`, `response.completed` | `gpt-6-luna` |
+| `response.output_item.added`, `response.content_part.added`, `response.metadata`, `response.output_text.done`, `response.content_part.done`, `response.output_item.done` | sin campo |
+
+Conclusión: esta vía informa el modelo en el objeto `response` de los eventos de ciclo de vida. En
+esta prueba coincide con el slug pedido; no se ha observado ningún caso en que difiera (por ejemplo,
+una versión fechada). No se probó si `response.failed` y `response.incomplete` también lo incluyen.
+El evento `response.metadata` no está documentado en las fuentes consultadas y el adaptador lo ignora.
+
 **Decisión:** la viabilidad del proveedor queda confirmada para desarrollo local con esta cuenta.
 Se continúa con OpenAI mediante Sign in with ChatGPT como adaptador real. AC-03 de SPEC-001 se
 cerrará cuando la respuesta completa llegue de extremo a extremo (desktop → backend → proveedor).

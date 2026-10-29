@@ -56,9 +56,14 @@ no cambiar automáticamente a una API de pago. El desarrollo con un proveedor si
 - [x] Revisar la especificación y registrar decisiones pendientes relevantes (2026-10-29, en la evidencia).
 - [x] Ejecutar la prueba de autenticación y catálogo; registrar resultado (2026-10-29: `completed`
   con `gpt-6-luna`; ver la evidencia).
-- [ ] Definir contrato de chat, streaming, error y cancelación; elegir transporte y formato.
-- [ ] Crear esqueleto hexagonal y proveedor simulado.
-- [ ] Implementar el caso de uso y pruebas de AC-01, AC-04 a AC-07 y AC-09.
+- [x] Definir contrato de chat, streaming, error y cancelación; elegir transporte y formato
+  ([chat-v1](../api/chat-v1.md), SSE, 2026-10-29).
+- [x] Crear esqueleto hexagonal y proveedor simulado.
+- [x] Implementar el caso de uso y pruebas de AC-01, AC-04 a AC-07 y AC-09. Cubierto en el núcleo del
+  backend; la parte visible de esos criterios se comprueba con desktop.
+- [x] Acordar el [modelo del chat](../domain/conversations.md) y alinear núcleo, contrato y pruebas
+  (2026-10-29): núcleo asíncrono, cancelación explícita inmediata, fechas y modelos por respuesta.
+- [ ] Exponer el contrato con FastAPI (SSE) usando el proveedor simulado o el real según configuración.
 - [ ] Crear Electron + React con vista, ViewModel y cliente de API.
 - [ ] Integrar streaming simulado y comprobar estados visibles.
 - [ ] Añadir el proveedor validado y ejecutar AC-03.

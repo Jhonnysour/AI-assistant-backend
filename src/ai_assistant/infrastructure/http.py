@@ -54,3 +54,12 @@ def build_http_client(settings: Settings, **kwargs) -> httpx.Client:
         for pattern, proxy in proxy_routes(settings).items()
     }
     return httpx.Client(trust_env=False, mounts=mounts, timeout=DEFAULT_TIMEOUT, **kwargs)
+
+
+def build_async_http_client(settings: Settings, **kwargs) -> httpx.AsyncClient:
+    """Mismas rutas de proxy que build_http_client, para el streaming del chat."""
+    mounts = {
+        pattern: httpx.AsyncHTTPTransport(proxy=proxy) if proxy else httpx.AsyncHTTPTransport()
+        for pattern, proxy in proxy_routes(settings).items()
+    }
+    return httpx.AsyncClient(trust_env=False, mounts=mounts, timeout=DEFAULT_TIMEOUT, **kwargs)

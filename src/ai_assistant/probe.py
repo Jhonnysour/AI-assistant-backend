@@ -9,6 +9,7 @@ navegador configurado, y nunca se escribe en archivos.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import os
 import shlex
 import subprocess
@@ -24,7 +25,11 @@ from ai_assistant.conversations.adapters.outbound.chatgpt_plan.credentials impor
     ModelAccessLog,
     load_or_create_host_id,
 )
-from ai_assistant.infrastructure.http import build_http_client, redact_url
+from ai_assistant.conversations.adapters.outbound.chatgpt_plan.session import (
+    ChatGptPlanSession,
+    SessionUnavailable,
+)
+from ai_assistant.infrastructure.http import build_async_http_client, build_http_client, redact_url
 from ai_assistant.infrastructure.secret_store import (
     ProtectedFile,
     SecretStoreCorrupted,
@@ -63,6 +68,9 @@ class Context:
 
     def http(self):
         return build_http_client(self.settings)
+
+    def async_http(self):
+        return build_async_http_client(self.settings)
 
 
 def _print_network(settings: Settings) -> None:
@@ -112,23 +120,13 @@ def _clear_tokens(ctx: Context, record: CredentialRecord) -> None:
 
 
 def _active_record(ctx: Context, http) -> CredentialRecord | None:
-    record = ctx.credentials.load()
-    if record is None or not record.refresh_token:
-        print("No hay sesión activa. Ejecuta: python -m ai_assistant.probe login", file=sys.stderr)
+    try:
+        return ChatGptPlanSession(ctx.credentials).current(http)
+    except SessionUnavailable as error:
+        print(error, file=sys.stderr)
+        if error.reason == "plan_usage_not_granted":
+            print("Repite 'login' y concede el uso del plan. No se activa ninguna API de pago.", file=sys.stderr)
         return None
-    if not record.plan_usage_granted:
-        print("La sesión no tiene permiso para usar el plan (falta chatgpt.tokens.use.direct).", file=sys.stderr)
-        print("Repite 'login' y concede el uso del plan. No se activa ninguna API de pago.", file=sys.stderr)
-        return None
-    if oauth.needs_refresh(record):
-        try:
-            record = oauth.refresh(http, record)
-        except oauth.ReauthorizationRequired as error:
-            _clear_tokens(ctx, record)
-            print(f"{error} Ejecuta 'login' de nuevo.", file=sys.stderr)
-            return None
-        ctx.credentials.save(record)  # El refresh token rota: se guarda antes de usarlo.
-    return record
 
 
 def cmd_login(ctx: Context, args) -> int:
@@ -191,40 +189,48 @@ def cmd_ask(ctx: Context, args) -> int:
         print("Mensaje vacío: no se llama al proveedor.", file=sys.stderr)
         return EXIT_ACTION_NEEDED
     _print_network(ctx.settings)
-    received = False
     with ctx.http() as http:
         record = _active_record(ctx, http)
-        if record is None:
-            return EXIT_ACTION_NEEDED
-        print(f"Modelo: {args.model}\n--- respuesta ---", flush=True)
-        events = responses.stream_response(http, record.access_token, args.model, args.text)
+    if record is None:
+        return EXIT_ACTION_NEEDED
+    print(f"Modelo: {args.model}\n--- respuesta ---", flush=True)
+    progress = {"received": False}
+    try:
+        return asyncio.run(_ask(ctx, record, args.model, args.text, progress))
+    except KeyboardInterrupt:
+        print("\n--- cancelado por el usuario ---", file=sys.stderr)
+        if progress["received"]:
+            print("El texto mostrado es parcial (cancelado).", file=sys.stderr)
+        return EXIT_CANCELLED
+
+
+async def _ask(ctx: Context, record: CredentialRecord, model: str, text: str, progress: dict) -> int:
+    async with ctx.async_http() as http:
+        events = responses.stream_response(http, record.access_token, model, [{"role": "user", "content": text}])
         try:
-            for event in events:
+            async for event in events:
                 if isinstance(event, responses.TextDelta):
-                    received = received or bool(event.text)
+                    progress["received"] = progress["received"] or bool(event.text)
                     print(event.text, end="", flush=True)
                     continue
                 print("\n--- fin ---")
+                if event.model:
+                    print(f"Modelo informado por el proveedor: {event.model}")
                 if event.completed:
-                    ctx.model_log.record_completed(record.client_id, args.model)
-                    print(f"Estado: completed. Acceso comprobado para '{args.model}'.")
+                    ctx.model_log.record_completed(record.client_id, model)
+                    print(f"Estado: completed. Acceso comprobado para '{model}'.")
                     return EXIT_OK
                 print(f"Estado: {event.status} ({event.code}).", file=sys.stderr)
                 if event.code in ERROR_EXPLANATIONS:
                     print(ERROR_EXPLANATIONS[event.code], file=sys.stderr)
-                if received:
+                if progress["received"]:
                     print("El texto mostrado es parcial y NO es una respuesta completa.", file=sys.stderr)
                 return EXIT_PROVIDER
         except responses.ProviderError as error:
             _explain_provider_error(error)
             return EXIT_PROVIDER
-        except KeyboardInterrupt:
-            print("\n--- cancelado por el usuario ---", file=sys.stderr)
-            if received:
-                print("El texto mostrado es parcial (cancelado).", file=sys.stderr)
-            return EXIT_CANCELLED
         finally:
-            events.close()  # Cierra la conexión del stream en cualquier salida.
+            await events.aclose()  # Cierra la conexión del stream en cualquier salida.
     return EXIT_PROVIDER
 
 

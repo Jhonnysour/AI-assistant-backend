@@ -8,7 +8,7 @@ Referencias (consultadas el 2026-10-29):
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Iterator
+from collections.abc import AsyncIterator, Iterable, Iterator
 from dataclasses import dataclass
 from typing import Literal
 
@@ -43,6 +43,7 @@ class StreamOutcome:
     status: Literal["completed", "failed", "incomplete", "interrupted"]
     code: str | None = None
     message: str | None = None
+    model: str | None = None  # response.model informado por el proveedor, si llegó.
 
     @property
     def completed(self) -> bool:
@@ -90,76 +91,133 @@ def list_models(http: httpx.Client, access_token: str) -> list[CatalogModel]:
     return parse_catalog(response.json())
 
 
-def parse_sse(lines: Iterable[str]) -> Iterator[tuple[str | None, str]]:
-    """Agrupa líneas Server-Sent Events en (event, data)."""
-    event: str | None = None
-    data: list[str] = []
-    for line in lines:
+class SseDecoder:
+    """Agrupa líneas Server-Sent Events en (event, data), línea a línea."""
+
+    def __init__(self) -> None:
+        self._event: str | None = None
+        self._data: list[str] = []
+
+    def feed(self, line: str) -> tuple[str | None, str] | None:
         if line == "":
-            if data:
-                yield event, "\n".join(data)
-            event, data = None, []
-        elif line.startswith(":"):
-            continue
-        else:
+            return self.flush()
+        if not line.startswith(":"):
             name, _, value = line.partition(":")
             value = value[1:] if value.startswith(" ") else value
             if name == "event":
-                event = value
+                self._event = value
             elif name == "data":
-                data.append(value)
-    if data:
-        yield event, "\n".join(data)
+                self._data.append(value)
+        return None
+
+    def flush(self) -> tuple[str | None, str] | None:
+        event = (self._event, "\n".join(self._data)) if self._data else None
+        self._event, self._data = None, []
+        return event
 
 
-def interpret_events(sse_events: Iterable[tuple[str | None, str]]) -> Iterator[StreamEvent]:
-    """Traduce eventos de Responses. Solo response.completed confirma una respuesta completa."""
-    for name, raw in sse_events:
+def parse_sse(lines: Iterable[str]) -> Iterator[tuple[str | None, str]]:
+    decoder = SseDecoder()
+    for line in lines:
+        if (event := decoder.feed(line)) is not None:
+            yield event
+    if (event := decoder.flush()) is not None:
+        yield event
+
+
+class EventInterpreter:
+    """Traduce eventos de Responses. Solo response.completed confirma una respuesta completa.
+
+    Recuerda el último response.model informado y lo adjunta al resultado final.
+    """
+
+    def __init__(self) -> None:
+        self.model: str | None = None
+        self.finished = False
+
+    def feed(self, name: str | None, raw: str) -> StreamEvent | None:
         if raw == "[DONE]":
-            break
+            return self.end()
         try:
             payload = json.loads(raw)
         except ValueError:
-            continue
+            return None
         kind = payload.get("type") or name
         if kind == "response.output_text.delta":
-            yield TextDelta(payload.get("delta", ""))
-        elif kind == "response.completed":
-            yield StreamOutcome("completed")
-            return
-        elif kind == "response.failed":
-            error = (payload.get("response") or {}).get("error") or {}
-            yield StreamOutcome("failed", error.get("code") or "unknown_error", error.get("message"))
-            return
-        elif kind == "response.incomplete":
-            details = (payload.get("response") or {}).get("incomplete_details") or {}
-            yield StreamOutcome("incomplete", details.get("reason"))
-            return
-        elif kind == "error":
+            return TextDelta(payload.get("delta", ""))
+        response = payload.get("response") if isinstance(payload.get("response"), dict) else {}
+        if isinstance(response.get("model"), str):
+            self.model = response["model"]
+        if kind == "response.completed":
+            return self._final("completed")
+        if kind == "response.failed":
+            error = response.get("error") or {}
+            return self._final("failed", error.get("code") or "unknown_error", error.get("message"))
+        if kind == "response.incomplete":
+            details = response.get("incomplete_details") or {}
+            return self._final("incomplete", details.get("reason"))
+        if kind == "error":
             error = payload.get("error") if isinstance(payload.get("error"), dict) else payload
-            yield StreamOutcome("failed", error.get("code") or "stream_error", error.get("message"))
+            return self._final("failed", error.get("code") or "stream_error", error.get("message"))
+        return None
+
+    def end(self, code: str = "stream_ended_without_completion") -> StreamOutcome:
+        """Resultado si el flujo termina sin evento final."""
+        self.finished = True
+        return StreamOutcome("interrupted", code, model=self.model)
+
+    def _final(self, status, code=None, message=None) -> StreamOutcome:
+        self.finished = True
+        return StreamOutcome(status, code, message, self.model)
+
+
+def interpret_events(sse_events: Iterable[tuple[str | None, str]]) -> Iterator[StreamEvent]:
+    interpreter = EventInterpreter()
+    for name, raw in sse_events:
+        if (event := interpreter.feed(name, raw)) is not None:
+            yield event
+        if interpreter.finished:
             return
-    yield StreamOutcome("interrupted", "stream_ended_without_completion")
+    yield interpreter.end()
 
 
-def request_body(model: str, text: str) -> dict:
+def request_body(model: str, input_items: list[dict]) -> dict:
     # store=false y stream=true son obligatorios en esta vía; no se envían temperature ni
-    # max_output_tokens porque no están admitidos.
+    # max_output_tokens porque no están admitidos. Sin store, el historial va completo en input.
     return {
         "model": model,
-        "input": [{"role": "user", "content": text}],
+        "input": input_items,
         "store": False,
         "stream": True,
     }
 
 
-def stream_response(http: httpx.Client, access_token: str, model: str, text: str) -> Iterator[StreamEvent]:
+async def stream_response(
+    http: httpx.AsyncClient, access_token: str, model: str, input_items: list[dict],
+) -> AsyncIterator[StreamEvent]:
+    """Cerrar el iterador (aclose o cancelar la tarea) cierra la conexión con el proveedor."""
     headers = {**_auth_headers(access_token), "Accept": "text/event-stream"}
+    body = request_body(model, input_items)
+    interpreter = EventInterpreter()
     try:
-        with http.stream("POST", f"{API_BASE}/responses", json=request_body(model, text), headers=headers) as response:
+        async with http.stream("POST", f"{API_BASE}/responses", json=body, headers=headers) as response:
             if response.status_code != 200:
-                response.read()
+                await response.aread()
                 raise _provider_error(response)
-            yield from interpret_events(parse_sse(response.iter_lines()))
+            async for name, raw in _sse_events(response):
+                if (event := interpreter.feed(name, raw)) is not None:
+                    yield event
+                if interpreter.finished:
+                    return
+            yield interpreter.end()
     except httpx.TransportError as error:
-        yield StreamOutcome("interrupted", type(error).__name__)
+        yield interpreter.end(type(error).__name__)
+
+
+async def _sse_events(response: httpx.Response) -> AsyncIterator[tuple[str | None, str]]:
+    decoder = SseDecoder()
+    async for line in response.aiter_lines():
+        if (event := decoder.feed(line)) is not None:
+            yield event
+    if (event := decoder.flush()) is not None:
+        yield event
