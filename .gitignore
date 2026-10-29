@@ -1,0 +1,44 @@
+﻿# Credenciales y configuración local
+.env
+.env.*
+!.env.example
+!.env.template
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node / Electron
+node_modules/
+dist/
+out/
+release/
+
+# Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+android/.gradle/
+android/local.properties
+ios/Pods/
+macos/Pods/
+**/Flutter/ephemeral/
+
+# Archivos generados y datos locales
+build/
+coverage/
+*.log
+*.db
+*.sqlite
+*.sqlite3
+
+# Sistema y configuración personal del IDE
+.DS_Store
+Thumbs.db
+.idea/
