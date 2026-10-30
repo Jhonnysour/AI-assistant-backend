@@ -3,8 +3,9 @@
 Backend propuesto en Python y FastAPI, con arquitectura hexagonal y PostgreSQL.
 Estado: la prueba de viabilidad del proveedor se superó el 2026-10-29. El núcleo de chat ya existe
 (dominio, caso de uso asíncrono, proveedor simulado y proveedor real), el modelo del chat y el
-contrato SSE están acordados y la API HTTP (FastAPI) los expone en local. No hay base de datos ni
-despliegue.
+contrato SSE están acordados y la API HTTP (FastAPI) los expone en local. Desde el 2026-10-30 las
+conversaciones se guardan en PostgreSQL (Docker Compose en local, [SPEC-002](docs/specs/002-persistencia-conversaciones.md)).
+No hay despliegue.
 
 ## Lectura inicial
 
@@ -16,6 +17,7 @@ despliegue.
 6. [Evidencia de la prueba del proveedor](docs/evidence/001-viabilidad-proveedor.md)
 7. [Contrato de chat v1 (SSE)](docs/api/chat-v1.md)
 8. [Modelo del chat de SPEC-001](docs/domain/conversations.md)
+9. [Persistencia: SPEC-002](docs/specs/002-persistencia-conversaciones.md) y [esquema de datos](docs/data/conversations-schema.md)
 
 Este repositorio alberga también la documentación compartida del producto.
 La primera entrega se desarrolla localmente; Coolify se incorpora cuando exista un flujo verificable.

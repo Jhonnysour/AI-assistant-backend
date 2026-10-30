@@ -6,9 +6,8 @@ proveedor y descarta los fragmentos tardíos. Si el consumidor abandona el flujo
 se corta la conexión del cliente), la respuesta termina como interrumpida. No hay reintentos
 automáticos.
 
-El servicio se usa desde un único bucle asyncio: comprobar y reservar un envío no tiene ningún
-await en medio, por lo que es atómico sin locks. Con persistencia, esa garantía pasará al
-repositorio.
+El estado de la respuesta se guarda al aceptar el envío, en puntos de control mientras llega texto
+(como mucho uno por segundo) y siempre antes de entregar el evento final.
 """
 
 from __future__ import annotations
@@ -16,7 +15,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import traceback
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Coroutine
+from typing import Any
 
 from ai_assistant.application import error_codes as codes
 from ai_assistant.application.ports.inbound.conversations import (
@@ -49,9 +49,11 @@ from ai_assistant.domain.conversations.model import (
 
 _log = logging.getLogger(__name__)
 
-# Tiempo máximo que cancel() espera a que se cierre la conexión con el proveedor. La respuesta ya
-# está cancelada y la conversación liberada antes de esperar.
+# Tiempo máximo que cancel() espera a que se guarde el estado cancelado y se cierre la conexión con
+# el proveedor. La respuesta ya está cancelada en memoria antes de esperar.
 CANCEL_CLEANUP_SECONDS = 5.0
+# Intervalo mínimo entre puntos de control del texto parcial (P2 de SPEC-002).
+CHECKPOINT_SECONDS = 1.0
 
 FinalEvent = ResponseCompleted | ResponseFailed | ResponseCancelled
 
@@ -75,6 +77,9 @@ class Turn:
         self._queue: asyncio.Queue[FinalEvent | ResponseDelta] = asyncio.Queue()
         self._pump: asyncio.Task | None = None
         self._started = False
+        self._write_lock = asyncio.Lock()
+        self._queued_write: asyncio.Task | None = None
+        self._last_checkpoint = 0.0
 
     @property
     def active(self) -> bool:
@@ -89,9 +94,8 @@ class Turn:
             yield MessageAccepted(self.message_id, self.response_id, self._reply.created_at,
                                   self._reply.model_requested)
             if self.active:
-                self._pump = asyncio.create_task(self._consume_provider())
-                self._service._tasks.add(self._pump)  # asyncio solo guarda referencias débiles.
-                self._pump.add_done_callback(self._service._tasks.discard)
+                self._last_checkpoint = asyncio.get_running_loop().time()
+                self._pump = self._service._spawn(self._consume_provider())
             elif self._queue.empty():  # Terminó antes de empezar (p. ej. abandonado con close()).
                 return
             while True:
@@ -106,16 +110,21 @@ class Turn:
         """El consumidor abandona el turno. Si seguía en curso, queda interrumpido (no cancelado)."""
         if self.active:
             self._fail(codes.INTERRUPTED, True)
+            self._persist()
         self._stop_provider()
         self._service._turns.pop(self.response_id, None)
 
-    def cancel(self) -> asyncio.Task | None:
-        """Cancelación pedida por el usuario. Devuelve la tarea del proveedor que se está cerrando."""
+    def cancel(self) -> set[asyncio.Task]:
+        """Cancelación pedida por el usuario. Devuelve las tareas pendientes: guardar el estado
+        cancelado y cerrar la conexión con el proveedor."""
         at = self._service._now()
         self._conversation.cancel(self.response_id, at)
-        self._service._conversations.save(self._conversation)
         self._queue.put_nowait(ResponseCancelled(self.response_id, at))
-        return self._stop_provider()
+        pending = {self._persist()}
+        closing = self._stop_provider()
+        if closing is not None:
+            pending.add(closing)
+        return pending
 
     def _stop_provider(self) -> asyncio.Task | None:
         if self._pump is None or self._pump.done():
@@ -126,9 +135,41 @@ class Turn:
     def _fail(self, code: str, retryable: bool, model_reported: str | None = None) -> ResponseFailed:
         at = self._service._now()
         status = self._conversation.fail(self.response_id, code, at, model_reported)
-        self._service._conversations.save(self._conversation)
         return ResponseFailed(self.response_id, status.value, code, user_message(code), retryable, at,
                               model_reported)
+
+    def _persist(self) -> asyncio.Task:
+        """Guarda el estado actual de la respuesta en una tarea propia.
+
+        Al ser otra tarea, cancelar el consumo del proveedor no corta una escritura a medias. El
+        cerrojo las ordena y cada una guarda el estado del momento en que se ejecuta. Si ya hay una
+        en cola que no ha empezado, esa misma recogerá el cambio más reciente: no se programa otra.
+        """
+        if self._queued_write is None:
+            self._queued_write = self._service._spawn(self._write())
+        return self._queued_write
+
+    async def _write(self) -> None:
+        async with self._write_lock:
+            self._queued_write = None  # Desde aquí, un cambio posterior necesita otra escritura.
+            try:
+                await self._service._conversations.save_response(self._conversation.id, self._reply)
+            except Exception as error:
+                # El stream continúa; si la respuesta queda en streaming, se recupera al arrancar.
+                _log.error("No se pudo guardar el estado de una respuesta (%s):\n%s", type(error).__name__,
+                           "".join(traceback.format_tb(error.__traceback__)))
+
+    def _checkpoint(self) -> None:
+        now = asyncio.get_running_loop().time()
+        if now - self._last_checkpoint >= self._service._checkpoint_seconds:
+            self._last_checkpoint = now
+            self._persist()
+
+    async def _finish(self, event: FinalEvent) -> None:
+        """Guarda el estado final antes de entregarlo: así el cliente puede enviar el siguiente
+        mensaje en cuanto lo recibe."""
+        await self._persist()
+        self._queue.put_nowait(event)
 
     async def _consume_provider(self) -> None:
         stream = self._service._provider.stream_reply(self._reply.model_requested, self._history)
@@ -139,25 +180,24 @@ class Turn:
                 if isinstance(event, TextChunk):
                     if event.text:
                         self._conversation.append_text(self.response_id, event.text)
-                        self._service._conversations.save(self._conversation)
                         self._queue.put_nowait(ResponseDelta(self.response_id, event.text))
+                        self._checkpoint()
                 elif isinstance(event, ProviderCompleted):
                     at = self._service._now()
                     self._conversation.complete(self.response_id, at, event.model_reported)
-                    self._service._conversations.save(self._conversation)
-                    self._queue.put_nowait(ResponseCompleted(self.response_id, at, event.model_reported))
+                    await self._finish(ResponseCompleted(self.response_id, at, event.model_reported))
                     return
                 elif isinstance(event, ProviderFailed):
-                    self._queue.put_nowait(self._fail(event.code, event.retryable, event.model_reported))
+                    await self._finish(self._fail(event.code, event.retryable, event.model_reported))
                     return
             if self.active:
-                self._queue.put_nowait(self._fail(codes.INTERRUPTED, True))
+                await self._finish(self._fail(codes.INTERRUPTED, True))
         except Exception as error:
             # Solo el tipo y las líneas de código: el mensaje podría contener datos del usuario.
             _log.error("Fallo interno en una respuesta (%s):\n%s", type(error).__name__,
                        "".join(traceback.format_tb(error.__traceback__)))
             if self.active:
-                self._queue.put_nowait(self._fail(codes.INTERNAL_ERROR, False))
+                await self._finish(self._fail(codes.INTERNAL_ERROR, False))
         finally:
             aclose = getattr(stream, "aclose", None)
             if aclose is not None:
@@ -167,45 +207,56 @@ class Turn:
 class ChatService:
     """Implementa StartConversation, SendMessage y CancelResponse."""
 
-    def __init__(self, conversations: ConversationRepository, provider: ChatProvider, clock: Clock) -> None:
+    def __init__(self, conversations: ConversationRepository, provider: ChatProvider, clock: Clock,
+                 checkpoint_seconds: float = CHECKPOINT_SECONDS) -> None:
         self._conversations = conversations
         self._provider = provider
         self._now = clock
+        self._checkpoint_seconds = checkpoint_seconds
         self._turns: dict[str, Turn] = {}
         self._tasks: set[asyncio.Task] = set()
 
-    def start_conversation(self) -> ConversationStarted:
-        conversation = Conversation.start(self._now())
-        self._conversations.add(conversation)
-        return ConversationStarted(conversation.id, conversation.created_at, persisted=False)
+    def _spawn(self, coroutine: Coroutine[Any, Any, None]) -> asyncio.Task:
+        task = asyncio.create_task(coroutine)
+        self._tasks.add(task)  # asyncio solo guarda referencias débiles.
+        task.add_done_callback(self._tasks.discard)
+        return task
 
-    def _get(self, conversation_id: str) -> Conversation:
-        conversation = self._conversations.get(conversation_id)
+    async def start_conversation(self) -> ConversationStarted:
+        conversation = Conversation.start(self._now())
+        await self._conversations.add(conversation)
+        return ConversationStarted(conversation.id, conversation.created_at,
+                                   persisted=self._conversations.durable)
+
+    async def _get(self, conversation_id: str) -> Conversation:
+        conversation = await self._conversations.get(conversation_id)
         if conversation is None:
             raise ConversationNotFound("La conversación no existe.")
         return conversation
 
-    def send(self, conversation_id: str, model: str, text: str) -> Turn:
+    async def send(self, conversation_id: str, model: str, text: str) -> Turn:
         """Valida y reserva el envío. Lanza EmptyMessage, SendInProgress, ConversationNotFound
-        o InvalidRequest sin llamar al proveedor."""
+        o InvalidRequest sin llamar al proveedor.
+
+        Comprobar y reservar en el dominio no tiene ningún await en medio. Con una base de datos, la
+        conversación es una copia propia y el repositorio garantiza lo mismo entre peticiones (I1).
+        """
         if not model or not model.strip():
             raise InvalidRequest("Falta el modelo.")
-        conversation = self._get(conversation_id)
+        conversation = await self._get(conversation_id)
         user, reply = conversation.begin_turn(text, model.strip(), self._now())
+        await self._conversations.add_turn(conversation, user, reply)
         history = [_provider_message(item) for item in conversation.context_for(reply.id)]
-        self._conversations.save(conversation)
         turn = Turn(self, conversation, user, reply, history)
         self._turns[reply.id] = turn
         return turn
 
     async def cancel(self, conversation_id: str, response_id: str) -> None:
         """Cancela una respuesta en curso. Lanza ConversationNotFound, ResponseNotFound o
-        ResponseNotActive (ya terminó)."""
-        conversation = self._get(conversation_id)
+        ResponseNotActive (ya terminó). Vuelve cuando el estado cancelado está guardado."""
+        conversation = await self._get(conversation_id)
         conversation.response(response_id)
         turn = self._turns.get(response_id)
         if turn is None or not turn.active:
             raise ResponseNotActive("La respuesta ya terminó.")
-        closing = turn.cancel()
-        if closing is not None:
-            await asyncio.wait({closing}, timeout=CANCEL_CLEANUP_SECONDS)
+        await asyncio.wait(turn.cancel(), timeout=CANCEL_CLEANUP_SECONDS)

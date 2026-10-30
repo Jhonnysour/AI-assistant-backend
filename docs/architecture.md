@@ -45,7 +45,8 @@ Proveedor inicial: OpenAI mediante Sign in with ChatGPT (uso del plan). Su viabi
 2026-10-29 ([evidencia](evidence/001-viabilidad-proveedor.md)).
 Streaming con eventos de progreso, finalización y error. Credenciales fuera de la UI y de los logs.
 El contrato HTTP se define antes de integrar desktop y se versiona en este repositorio.
-No hace falta una base de datos hasta implementar persistencia; la sesión inicial puede ser temporal.
+Persistencia en PostgreSQL desde [SPEC-002](specs/002-persistencia-conversaciones.md), con el
+[esquema](data/conversations-schema.md) gestionado por migraciones (Alembic).
 
 ## Despliegue y red
 
@@ -79,11 +80,14 @@ src/ai_assistant/
                                              # ResponseStream, eventos del flujo y errores
     ports/outbound/chat_provider.py          # ChatProvider (async) y eventos del proveedor
     ports/outbound/model_catalog.py          # ModelCatalog, CatalogUnavailable
-    ports/outbound/conversation_repository.py
+    ports/outbound/conversation_repository.py  # async; escrituras por partes; ConversationHeader
     ports/outbound/clock.py                  # Clock
     use_cases/conversations/chat.py          # ChatService/Turn: crear, enviar, flujo de eventos y cancelación
     use_cases/conversations/list_models.py   # ListModelsService
+    use_cases/conversations/history.py       # listar, leer, renombrar y borrar conversaciones
+    use_cases/conversations/recovery.py      # al arrancar, cierra respuestas que quedaron en curso
     use_cases/conversations/messages.py      # mensajes al usuario por código de error
+    errors.py                                # StorageUnavailable
   infrastructure/
     config.py                                # lectura del entorno
     http_client.py                           # clientes httpx (síncrono y asíncrono) con proxy explícito
@@ -91,10 +95,12 @@ src/ai_assistant/
     adapters/inbound/http/chat_v1.py         # FastAPI: endpoints chat-v1, SSE y formato de error
     adapters/outbound/llm/fake.py            # proveedor y catálogo simulados
     adapters/outbound/llm/chatgpt_plan/      # proveedor real: oauth, credentials, session, responses, provider
-    adapters/outbound/persistence/in_memory.py  # sesión temporal
+    adapters/outbound/persistence/in_memory.py  # sin base de datos (pruebas, uso sin PostgreSQL)
+    adapters/outbound/persistence/postgres/  # tables.py (SQLAlchemy Core), repository.py, schema.py, migrations/
     adapters/outbound/system_clock.py        # reloj del sistema (UTC)
     bootstrap/server.py                      # composición del servidor HTTP, uvicorn en 127.0.0.1
     tools/probe.py                           # CLI de la prueba de viabilidad del proveedor
+    tools/migrate.py                         # aplica las migraciones de PostgreSQL
 ```
 
 - El contrato hacia los clientes está en [api/chat-v1.md](api/chat-v1.md) y usa SSE.
@@ -104,8 +110,8 @@ src/ai_assistant/
   en una tarea propia por turno; cancelar marca `cancelled` y libera la conversación en el acto,
   interrumpe la espera de red y descarta lo que llegue después
   ([sección 8 del modelo](domain/conversations.md#8-cancelación)).
-- El caso de uso no reintenta. "Un envío activo" es atómico porque el servicio corre en un único
-  bucle asyncio; con persistencia, esa garantía pasará al repositorio.
+- El caso de uso no reintenta. "Un envío activo" se comprueba y reserva en el dominio sin ningún
+  `await` en medio; entre peticiones con copias distintas lo garantiza el repositorio.
 - El adaptador real hace el streaming con `httpx.AsyncClient`. La renovación de tokens reutiliza el
   flujo OAuth síncrono de la CLI en un hilo aparte (`asyncio.to_thread`).
 - Los fallos propios del backend se registran con `logging` (solo tipo y líneas de código, sin
@@ -117,8 +123,13 @@ src/ai_assistant/
 - `ChatService` implementa `StartConversation`, `SendMessage` y `CancelResponse`; `ListModelsService`
   implementa `ListModels`. El proveedor por defecto es el simulado; `AI_ASSISTANT_PROVIDER=chatgpt_plan`
   activa el real. Ambas decisiones se toman en `bootstrap/server.py`.
-- `ConversationRepository` es síncrono. Con PostgreSQL y un driver asíncrono, el puerto pasará a
-  `async`.
+- `ConversationRepository` es asíncrono y escribe por partes: aceptar un envío, guardar el estado de
+  una respuesta (puntos de control como mucho una vez por segundo y siempre el final) y guardar el
+  título. Cada escritura de la respuesta va en una tarea propia, ordenada por un cerrojo, para que
+  cancelar el consumo del proveedor no corte una escritura a medias.
+- Con PostgreSQL cada petición trabaja con su propia copia de la conversación, y la garantía de un
+  envío activo (I1) la da un índice único parcial. Se supone un único proceso del backend: al
+  arrancar, las respuestas en `streaming` se cierran como interrumpidas.
 
 ## Evolución
 

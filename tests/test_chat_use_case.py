@@ -46,11 +46,22 @@ class StepClock:
         return self.now
 
 
+def done(coroutine):
+    """Ejecuta una corrutina que no llega a suspenderse (con el repositorio en memoria), dentro o
+    fuera de un bucle asyncio."""
+    try:
+        coroutine.send(None)
+    except StopIteration as stop:
+        return stop.value
+    coroutine.close()
+    raise AssertionError("La corrutina se suspendió; usa await.")
+
+
 def setup(script=None):
     provider = FakeChatProvider(script)
     repository = InMemoryConversationRepository()
     service = ChatService(repository, provider, clock=StepClock())
-    conversation = repository.get(service.start_conversation().conversation_id)
+    conversation = done(repository.get(done(service.start_conversation()).conversation_id))
     return service, provider, conversation
 
 
@@ -63,7 +74,7 @@ async def collect(turn):
 
 
 def run_turn(service, conversation_id, text, model="model"):
-    return asyncio.run(collect(service.send(conversation_id, model, text)))
+    return asyncio.run(collect(done(service.send(conversation_id, model, text))))
 
 
 async def settle():
@@ -75,7 +86,7 @@ async def settle():
 def test_ac01_empty_message_is_rejected_without_calling_provider(text):
     service, provider, conversation = setup()
     with pytest.raises(EmptyMessage):
-        service.send(conversation.id, "model", text)
+        done(service.send(conversation.id, "model", text))
     assert provider.calls == []
     assert conversation.messages == [] and conversation.active_response_id is None
 
@@ -83,16 +94,16 @@ def test_ac01_empty_message_is_rejected_without_calling_provider(text):
 def test_missing_model_or_conversation_is_rejected():
     service, provider, conversation = setup()
     with pytest.raises(InvalidRequest):
-        service.send(conversation.id, " ", "hola")
+        done(service.send(conversation.id, " ", "hola"))
     with pytest.raises(ConversationNotFound):
-        service.send("does-not-exist", "model", "hola")
+        done(service.send("does-not-exist", "model", "hola"))
     assert provider.calls == []
 
 
 def test_ac02_chunks_then_completed_with_dates_and_models():
     service, provider, conversation = setup([TextChunk("Hola, "), TextChunk("mundo"),
                                              ProviderCompleted("gpt-6-luna-reported")])
-    turn = service.send(conversation.id, "gpt-6-luna", "Saluda")
+    turn = done(service.send(conversation.id, "gpt-6-luna", "Saluda"))
     events = asyncio.run(collect(turn))
     reply = reply_of(conversation)
     assert events == [
@@ -165,7 +176,7 @@ def test_ac06_cancel_while_provider_is_waiting_is_immediate():
         gate = asyncio.Event()  # El proveedor no envía nada hasta que se active.
         service, provider, conversation = setup([TextChunk("parcial"), gate,
                                                  TextChunk(" tardío"), ProviderCompleted()])
-        turn = service.send(conversation.id, "model", "hola")
+        turn = done(service.send(conversation.id, "model", "hola"))
         events = turn.events()
         assert isinstance(await anext(events), MessageAccepted)
         assert await anext(events) == ResponseDelta(turn.response_id, "parcial")
@@ -186,7 +197,7 @@ def test_ac06_cancel_while_provider_is_waiting_is_immediate():
         await settle()
         assert reply.text == "parcial" and reply.status is ResponseStatus.CANCELLED
         provider.script = None
-        assert isinstance((await collect(service.send(conversation.id, "model", "otra")))[-1], ResponseCompleted)
+        assert isinstance((await collect(done(service.send(conversation.id, "model", "otra"))))[-1], ResponseCompleted)
 
     asyncio.run(scenario())
 
@@ -194,7 +205,7 @@ def test_ac06_cancel_while_provider_is_waiting_is_immediate():
 def test_ac06_cancel_before_streaming_does_not_call_provider():
     async def scenario():
         service, provider, conversation = setup()
-        turn = service.send(conversation.id, "model", "hola")
+        turn = done(service.send(conversation.id, "model", "hola"))
         await service.cancel(conversation.id, turn.response_id)
         events = await collect(turn)
         assert [type(e) for e in events] == [MessageAccepted, ResponseCancelled]
@@ -225,7 +236,7 @@ def test_client_disconnect_without_cancel_is_interrupted(chunks, status):
     async def scenario():
         gate = asyncio.Event()
         service, provider, conversation = setup([*chunks, gate, ProviderCompleted()])
-        turn = service.send(conversation.id, "model", "hola")
+        turn = done(service.send(conversation.id, "model", "hola"))
         events = turn.events()
         await anext(events)
         if chunks:
@@ -247,9 +258,9 @@ def test_client_disconnect_without_cancel_is_interrupted(chunks, status):
 
 def test_ac07_second_send_while_active_is_rejected():
     service, provider, conversation = setup()
-    first = service.send(conversation.id, "model", "uno")
+    first = done(service.send(conversation.id, "model", "uno"))
     with pytest.raises(SendInProgress):
-        service.send(conversation.id, "model", "dos")  # Doble clic.
+        done(service.send(conversation.id, "model", "dos"))  # Doble clic.
     asyncio.run(collect(first))
     assert len(provider.calls) == 1
     run_turn(service, conversation.id, "dos")

@@ -19,15 +19,23 @@ from pydantic import BaseModel
 
 from ai_assistant.application import error_codes as codes
 from ai_assistant.application.ports.inbound.conversations import (
+    AssistantResponseView,
     CancelResponse,
     ChatEvent,
+    ConversationDetail,
     ConversationError,
     ConversationNotFound,
+    ConversationSummary,
+    DeleteConversation,
     EmptyMessage,
+    GetConversation,
     InvalidRequest,
+    InvalidTitle,
+    ListConversations,
     ListModels,
     MessageAccepted,
     ModelsUnavailable,
+    RenameConversation,
     ResponseCancelled,
     ResponseCompleted,
     ResponseDelta,
@@ -38,6 +46,7 @@ from ai_assistant.application.ports.inbound.conversations import (
     SendInProgress,
     SendMessage,
     StartConversation,
+    StorageUnavailable,
 )
 
 _log = logging.getLogger(__name__)
@@ -46,6 +55,7 @@ _log = logging.getLogger(__name__)
 REQUEST_ERRORS: dict[str, tuple[int, str]] = {
     EmptyMessage.code: (400, "El mensaje está vacío."),
     InvalidRequest.code: (400, "La petición no es válida."),
+    InvalidTitle.code: (400, "El título debe tener entre 1 y 120 caracteres, sin espacios en los extremos."),
     ConversationNotFound.code: (404, "La conversación no existe. Crea una nueva."),
     ResponseNotFound.code: (404, "La respuesta no existe en esta conversación."),
     SendInProgress.code: (409, "Ya hay una respuesta en curso en esta conversación."),
@@ -62,6 +72,7 @@ CATALOG_STATUS = {
 }
 
 INTERNAL_ERROR_MESSAGE = "Error interno del asistente."
+STORAGE_UNAVAILABLE_MESSAGE = "No se pudo acceder a las conversaciones guardadas. Inténtalo más tarde."
 
 
 @dataclass(frozen=True)
@@ -72,6 +83,10 @@ class ConversationUseCases:
     send: SendMessage
     cancel: CancelResponse
     list_models: ListModels
+    list_conversations: ListConversations
+    get_conversation: GetConversation
+    rename: RenameConversation
+    delete: DeleteConversation
 
 
 class ApiError(Exception):
@@ -88,6 +103,10 @@ class ApiError(Exception):
 class SendMessageRequest(BaseModel):
     model: str
     text: str
+
+
+class RenameRequest(BaseModel):
+    title: str | None  # Obligatorio; null vuelve al título derivado del primer mensaje.
 
 
 def iso(moment: datetime | None) -> str | None:
@@ -123,6 +142,31 @@ def to_sse(event: ChatEvent) -> ServerSentEvent:
     raise TypeError(f"Evento desconocido: {type(event).__name__}")
 
 
+def summary_json(summary: ConversationSummary) -> dict:
+    return {
+        "conversation_id": summary.conversation_id, "title": summary.title,
+        "title_is_custom": summary.title_is_custom, "created_at": iso(summary.created_at),
+        "updated_at": iso(summary.updated_at),
+    }
+
+
+def message_json(item) -> dict:
+    if isinstance(item, AssistantResponseView):
+        error = None if item.error_code is None else {"code": item.error_code, "message": item.error_message}
+        return {
+            "role": "assistant", "response_id": item.response_id, "in_reply_to": item.in_reply_to,
+            "text": item.text, "status": item.status, "error": error,
+            "model_requested": item.model_requested, "model_reported": item.model_reported,
+            "created_at": iso(item.created_at), "finished_at": iso(item.finished_at),
+        }
+    return {"role": "user", "message_id": item.message_id, "text": item.text, "created_at": iso(item.created_at)}
+
+
+def detail_json(detail: ConversationDetail) -> dict:
+    return {**summary_json(detail.summary), "persisted": detail.persisted,
+            "messages": [message_json(item) for item in detail.messages]}
+
+
 def get_use_cases(request: Request) -> ConversationUseCases:
     return request.app.state.use_cases
 
@@ -136,7 +180,7 @@ async def accepted_stream(conversation_id: str, body: SendMessageRequest,
     no queda bloqueada (I9).
     """
     try:
-        stream = use_cases.send.send(conversation_id, body.model, body.text)
+        stream = await use_cases.send.send(conversation_id, body.model, body.text)
     except ConversationError as error:
         raise ApiError.from_request_error(error) from error
     try:
@@ -149,10 +193,43 @@ router = APIRouter(prefix="/v1")
 
 
 @router.post("/conversations", status_code=201)
-def create_conversation(use_cases: ConversationUseCases = Depends(get_use_cases)) -> dict:
-    started = use_cases.start.start_conversation()
+async def create_conversation(use_cases: ConversationUseCases = Depends(get_use_cases)) -> dict:
+    started = await use_cases.start.start_conversation()
     return {"conversation_id": started.conversation_id, "created_at": iso(started.created_at),
             "persisted": started.persisted}
+
+
+@router.get("/conversations")
+async def list_conversations(use_cases: ConversationUseCases = Depends(get_use_cases)) -> dict:
+    summaries = await use_cases.list_conversations.list_conversations()
+    return {"conversations": [summary_json(summary) for summary in summaries]}
+
+
+@router.get("/conversations/{conversation_id}")
+async def get_conversation(conversation_id: str, use_cases: ConversationUseCases = Depends(get_use_cases)) -> dict:
+    try:
+        return detail_json(await use_cases.get_conversation.get_conversation(conversation_id))
+    except ConversationError as error:
+        raise ApiError.from_request_error(error) from error
+
+
+@router.patch("/conversations/{conversation_id}")
+async def rename_conversation(conversation_id: str, body: RenameRequest,
+                              use_cases: ConversationUseCases = Depends(get_use_cases)) -> dict:
+    try:
+        return summary_json(await use_cases.rename.rename_conversation(conversation_id, body.title))
+    except ConversationError as error:
+        raise ApiError.from_request_error(error) from error
+
+
+@router.delete("/conversations/{conversation_id}", status_code=204)
+async def delete_conversation(conversation_id: str,
+                              use_cases: ConversationUseCases = Depends(get_use_cases)) -> Response:
+    try:
+        await use_cases.delete.delete_conversation(conversation_id)
+    except ConversationError as error:
+        raise ApiError.from_request_error(error) from error
+    return Response(status_code=204)
 
 
 @router.get("/models")
@@ -192,6 +269,11 @@ def install(app: FastAPI, use_cases: ConversationUseCases) -> None:
     @app.exception_handler(ApiError)
     async def api_error(request: Request, error: ApiError) -> JSONResponse:
         return JSONResponse(_error_body(error.code, error.message), status_code=error.status)
+
+    @app.exception_handler(StorageUnavailable)
+    async def storage_unavailable(request: Request, error: StorageUnavailable) -> JSONResponse:
+        _log.error("Almacenamiento no disponible en %s %s (%s).", request.method, request.url.path, error)
+        return JSONResponse(_error_body(StorageUnavailable.code, STORAGE_UNAVAILABLE_MESSAGE), status_code=503)
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(request: Request, error: RequestValidationError) -> JSONResponse:

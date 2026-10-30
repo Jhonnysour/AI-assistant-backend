@@ -12,9 +12,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Protocol
 
+from ai_assistant.application.errors import StorageUnavailable
 from ai_assistant.domain.conversations.model import (
     ConversationError,
     EmptyMessage,
+    InvalidTitle,
     ModelOption,
     ResponseNotActive,
     ResponseNotFound,
@@ -22,10 +24,13 @@ from ai_assistant.domain.conversations.model import (
 )
 
 __all__ = [
-    "CancelResponse", "ChatEvent", "ConversationError", "ConversationNotFound", "ConversationStarted",
-    "EmptyMessage", "InvalidRequest", "ListModels", "MessageAccepted", "ModelOption", "ModelsUnavailable",
-    "ResponseCancelled", "ResponseCompleted", "ResponseDelta", "ResponseFailed", "ResponseNotActive",
-    "ResponseNotFound", "ResponseStream", "SendInProgress", "SendMessage", "StartConversation",
+    "AssistantResponseView", "CancelResponse", "ChatEvent", "ConversationDetail", "ConversationError",
+    "ConversationNotFound", "ConversationStarted", "ConversationSummary", "DeleteConversation",
+    "EmptyMessage", "GetConversation", "InvalidRequest", "InvalidTitle", "ListConversations", "ListModels",
+    "MessageAccepted", "ModelOption", "ModelsUnavailable", "RenameConversation", "ResponseCancelled",
+    "ResponseCompleted", "ResponseDelta", "ResponseFailed", "ResponseNotActive", "ResponseNotFound",
+    "ResponseStream", "SendInProgress", "SendMessage", "StartConversation", "StorageUnavailable",
+    "UserMessageView",
 ]
 
 
@@ -55,7 +60,44 @@ class ModelsUnavailable(Exception):
 class ConversationStarted:
     conversation_id: str
     created_at: datetime
-    persisted: bool  # False mientras la conversación solo viva en memoria.
+    persisted: bool  # False si el backend funciona sin base de datos.
+
+
+@dataclass(frozen=True)
+class ConversationSummary:
+    conversation_id: str
+    title: str | None  # Nulo hasta el primer mensaje.
+    title_is_custom: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
+class UserMessageView:
+    message_id: str
+    text: str
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class AssistantResponseView:
+    response_id: str
+    in_reply_to: str
+    text: str  # En streaming, el del último punto de control.
+    status: str
+    error_code: str | None
+    error_message: str | None  # Se puede mostrar al usuario.
+    model_requested: str
+    model_reported: str | None
+    created_at: datetime
+    finished_at: datetime | None
+
+
+@dataclass(frozen=True)
+class ConversationDetail:
+    summary: ConversationSummary
+    persisted: bool
+    messages: list[UserMessageView | AssistantResponseView]
 
 
 @dataclass(frozen=True)
@@ -116,12 +158,14 @@ class ResponseStream(Protocol):
         ...
 
 
+# Todos los casos de uso pueden lanzar StorageUnavailable si la base de datos no responde.
+
 class StartConversation(Protocol):
-    def start_conversation(self) -> ConversationStarted: ...
+    async def start_conversation(self) -> ConversationStarted: ...
 
 
 class SendMessage(Protocol):
-    def send(self, conversation_id: str, model: str, text: str) -> ResponseStream:
+    async def send(self, conversation_id: str, model: str, text: str) -> ResponseStream:
         """Valida y reserva el envío sin llamar al proveedor. Lanza EmptyMessage, InvalidRequest,
         ConversationNotFound o SendInProgress."""
         ...
@@ -131,6 +175,30 @@ class CancelResponse(Protocol):
     async def cancel(self, conversation_id: str, response_id: str) -> None:
         """Cancela una respuesta en curso. Lanza ConversationNotFound, ResponseNotFound o
         ResponseNotActive."""
+        ...
+
+
+class ListConversations(Protocol):
+    async def list_conversations(self) -> list[ConversationSummary]:
+        """Por última actividad, la más reciente primero."""
+        ...
+
+
+class GetConversation(Protocol):
+    async def get_conversation(self, conversation_id: str) -> ConversationDetail:
+        """Lanza ConversationNotFound."""
+        ...
+
+
+class RenameConversation(Protocol):
+    async def rename_conversation(self, conversation_id: str, title: str | None) -> ConversationSummary:
+        """Título propio, o None para volver al derivado. Lanza ConversationNotFound o InvalidTitle."""
+        ...
+
+
+class DeleteConversation(Protocol):
+    async def delete_conversation(self, conversation_id: str) -> None:
+        """Borrado definitivo. Lanza ConversationNotFound o SendInProgress (respuesta en curso)."""
         ...
 
 

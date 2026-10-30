@@ -1,0 +1,26 @@
+# PostgreSQL para desarrollo local (SPEC-002). Solo escucha en 127.0.0.1.
+# La contraseña se lee de .env (no versionado); ver .env.example y docs/development.md.
+name: ai-assistant
+
+services:
+  postgres:
+    image: postgres:18.6
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ai_assistant
+      POSTGRES_DB: ai_assistant
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD en .env}
+    ports:
+      - "127.0.0.1:${AI_ASSISTANT_DB_PORT:-5432}:5432"
+    volumes:
+      # Desde PostgreSQL 18 el volumen se monta en /var/lib/postgresql (no en .../data).
+      - postgres-data:/var/lib/postgresql
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_assistant -d ai_assistant"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-data:

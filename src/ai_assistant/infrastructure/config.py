@@ -22,6 +22,7 @@ class Settings:
     browser_command: str | None
     chat_provider: str = "fake"
     api_port: int = DEFAULT_API_PORT
+    database_url: str | None = None  # postgresql://…; sin ella, las conversaciones viven en memoria.
 
 
 def _env(environ: dict[str, str], name: str) -> str | None:
@@ -55,4 +56,5 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
         browser_command=_env(environ, "AI_ASSISTANT_BROWSER"),
         chat_provider=provider,
         api_port=int(api_port) if api_port else DEFAULT_API_PORT,
+        database_url=_env(environ, "AI_ASSISTANT_DATABASE_URL"),
     )

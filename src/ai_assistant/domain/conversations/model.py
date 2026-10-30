@@ -1,4 +1,4 @@
-"""Conversación temporal: mensajes del usuario, respuestas del asistente y reglas de envío.
+"""Conversación: mensajes del usuario, respuestas del asistente y reglas de envío.
 
 Sin dependencias de framework, red ni proveedor. Las fechas las aporta el caso de uso (UTC).
 Modelo descrito en docs/domain/conversations.md.
@@ -41,6 +41,22 @@ class ResponseNotActive(ConversationError):
     code = "response_not_active"
 
 
+class InvalidTitle(ConversationError):
+    code = "invalid_title"
+
+
+DERIVED_TITLE_LENGTH = 60
+MAX_TITLE_LENGTH = 120
+
+
+def derive_title(text: str) -> str:
+    """Título a partir del primer mensaje: espacios colapsados y como mucho 60 caracteres."""
+    collapsed = " ".join(text.split())
+    if len(collapsed) <= DERIVED_TITLE_LENGTH:
+        return collapsed
+    return collapsed[: DERIVED_TITLE_LENGTH - 1].rstrip() + "…"
+
+
 @dataclass(frozen=True)
 class ModelOption:
     """Modelo ofrecido por el proveedor. El catálogo por sí solo no garantiza acceso."""
@@ -81,10 +97,42 @@ class Conversation:
     created_at: datetime
     messages: list[UserMessage | AssistantResponse] = field(default_factory=list)
     active_response_id: str | None = None
+    title: str | None = None  # Derivado del primer mensaje o fijado por el usuario.
+    title_is_custom: bool = False
+    updated_at: datetime | None = None  # Última actividad: creación, envío o cambio de título.
+
+    def __post_init__(self) -> None:
+        if self.updated_at is None:
+            self.updated_at = self.created_at
 
     @classmethod
     def start(cls, at: datetime) -> Conversation:
         return cls(id=new_id(), created_at=at)
+
+    def _first_message(self) -> UserMessage | None:
+        return next((m for m in self.messages if isinstance(m, UserMessage)), None)
+
+    def rename(self, title: str | None, at: datetime) -> None:
+        """Fija un título propio, o vuelve al derivado del primer mensaje con None."""
+        if title is None:
+            first = self._first_message()
+            self.title = derive_title(first.text) if first else None
+            self.title_is_custom = False
+        else:
+            if title != title.strip() or not 1 <= len(title) <= MAX_TITLE_LENGTH:
+                raise InvalidTitle("El título debe tener entre 1 y 120 caracteres, sin espacios en los extremos.")
+            self.title = title
+            self.title_is_custom = True
+        self.updated_at = at
+
+    def ensure_deletable(self) -> None:
+        if self.active_response_id is not None:
+            raise SendInProgress("Hay una respuesta en curso; cancélala antes de borrar la conversación.")
+
+    def user_position(self, message_id: str) -> int:
+        """Posición (0, 1, 2…) del mensaje entre los mensajes del usuario de la conversación."""
+        users = [m.id for m in self.messages if isinstance(m, UserMessage)]
+        return users.index(message_id)
 
     def begin_turn(self, text: str, model: str, at: datetime) -> tuple[UserMessage, AssistantResponse]:
         """Acepta un mensaje del usuario y crea su respuesta en curso. Un envío activo a la vez."""
@@ -96,6 +144,9 @@ class Conversation:
         reply = AssistantResponse(new_id(), user.id, model, at)
         self.messages += [user, reply]
         self.active_response_id = reply.id
+        if self.title is None:
+            self.title = derive_title(text)
+        self.updated_at = at
         return user, reply
 
     def response(self, response_id: str) -> AssistantResponse:

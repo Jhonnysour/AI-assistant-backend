@@ -33,7 +33,7 @@ class Backend:
         self.app = create_app(self.use_cases)
 
     def reply(self, conversation_id):
-        return self.repository.get(conversation_id).messages[-1]
+        return self.repository._items[conversation_id].messages[-1]
 
 
 def events_of(lines):
@@ -136,14 +136,14 @@ def test_unknown_conversation_is_404(client):
 
 def test_second_send_while_active_is_409(client, backend):
     conversation_id = new_conversation(client)
-    backend.use_cases.send.send(conversation_id, "m", "uno")  # Envío aceptado y aún en curso.
+    client.portal.call(backend.use_cases.send.send, conversation_id, "m", "uno")  # Envío aceptado y en curso.
     response = client.post(f"/v1/conversations/{conversation_id}/messages", json={"model": "m", "text": "dos"})
     assert (response.status_code, response.json()["error"]["code"]) == (409, "send_in_progress")
 
 
 def test_cancel_endpoint(client, backend):
     conversation_id = new_conversation(client)
-    turn = backend.use_cases.send.send(conversation_id, "m", "hola")
+    turn = client.portal.call(backend.use_cases.send.send, conversation_id, "m", "hola")
     url = f"/v1/conversations/{conversation_id}/responses/{turn.response_id}/cancel"
     assert client.post(url).status_code == 204
     assert backend.reply(conversation_id).status is ResponseStatus.CANCELLED
@@ -247,3 +247,68 @@ def test_server_client_disconnect_without_cancel_is_interrupted():
         reply = backend.reply(conversation_id)
         assert (reply.status, reply.error_code, reply.text) == (ResponseStatus.INTERRUPTED, "interrupted", "parcial")
         assert wait_for(lambda: backend.provider.closed_streams == 1)
+
+
+# --- Conversaciones guardadas (SPEC-002), en memoria ---
+
+def test_list_get_rename_delete_endpoints(client):
+    conversation_id = new_conversation(client)
+    send(client, conversation_id, "Planes para el sábado")
+    listed = client.get("/v1/conversations").json()["conversations"]
+    assert [(c["conversation_id"], c["title"], c["title_is_custom"]) for c in listed] == [
+        (conversation_id, "Planes para el sábado", False)]
+    assert listed[0]["updated_at"].endswith("Z")
+
+    detail = client.get(f"/v1/conversations/{conversation_id}").json()
+    assert detail["persisted"] is False
+    user, reply = detail["messages"]
+    assert (user["role"], user["text"]) == ("user", "Planes para el sábado")
+    assert (reply["role"], reply["status"], reply["in_reply_to"], reply["error"]) == (
+        "assistant", "completed", user["message_id"], None)
+    assert reply["text"] == "Respuesta simulada a: Planes para el sábado" and reply["finished_at"]
+
+    renamed = client.patch(f"/v1/conversations/{conversation_id}", json={"title": "Sábado"})
+    assert (renamed.status_code, renamed.json()["title"], renamed.json()["title_is_custom"]) == (200, "Sábado", True)
+    reset = client.patch(f"/v1/conversations/{conversation_id}", json={"title": None}).json()
+    assert reset["title"] == "Planes para el sábado"
+    bad = client.patch(f"/v1/conversations/{conversation_id}", json={"title": " "})
+    assert (bad.status_code, bad.json()["error"]["code"]) == (400, "invalid_title")
+    assert client.patch(f"/v1/conversations/{conversation_id}", json={}).status_code == 400
+
+    assert client.delete(f"/v1/conversations/{conversation_id}").status_code == 204
+    for response in (client.get(f"/v1/conversations/{conversation_id}"),
+                     client.delete(f"/v1/conversations/{conversation_id}"),
+                     client.patch(f"/v1/conversations/{conversation_id}", json={"title": "x"})):
+        assert (response.status_code, response.json()["error"]["code"]) == (404, "conversation_not_found")
+    assert client.get("/v1/conversations").json() == {"conversations": []}
+
+
+def test_history_shows_failed_response_error(backend, client):
+    backend.provider.script = [TextChunk("a"), ProviderFailed(codes.USAGE_LIMIT, False)]
+    conversation_id = new_conversation(client)
+    send(client, conversation_id)
+    reply = client.get(f"/v1/conversations/{conversation_id}").json()["messages"][1]
+    assert (reply["status"], reply["text"], reply["error"]["code"]) == ("interrupted", "a", codes.USAGE_LIMIT)
+    assert "retryable" not in reply["error"]
+
+
+def test_delete_with_streaming_response_is_409(client, backend):
+    conversation_id = new_conversation(client)
+    client.portal.call(backend.use_cases.send.send, conversation_id, "m", "uno")
+    response = client.delete(f"/v1/conversations/{conversation_id}")
+    assert (response.status_code, response.json()["error"]["code"]) == (409, "send_in_progress")
+
+
+def test_storage_unavailable_is_503_without_details(caplog):
+    from ai_assistant.application.errors import StorageUnavailable
+
+    class DownRepository(InMemoryConversationRepository):
+        async def list_recent(self):
+            raise StorageUnavailable("ConnectionRefusedError")
+
+    use_cases = build_use_cases(DownRepository(), FakeChatProvider(), FakeModelCatalog())
+    with TestClient(create_app(use_cases)) as client:
+        response = client.get("/v1/conversations")
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "storage_unavailable"
+    assert "ConnectionRefusedError" in caplog.text

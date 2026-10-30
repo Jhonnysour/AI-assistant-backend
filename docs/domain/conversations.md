@@ -1,6 +1,8 @@
-# Modelo del chat (SPEC-001)
+# Modelo del chat (SPEC-001 y SPEC-002)
 
-Estado: **acordado** el 2026-10-29. El usuario revisó la propuesta del agente (decisiones R1–R12 y
+Estado: **acordado** el 2026-10-29; ampliado el 2026-10-30 con la persistencia de
+[SPEC-002](../specs/002-persistencia-conversaciones.md) (título, última actividad, borrado y
+recuperación; el esquema está en [conversations-schema.md](../data/conversations-schema.md)). El usuario revisó la propuesta del agente (decisiones R1–R12 y
 bloques B y C, al final) y el código, el contrato [chat-v1](../api/chat-v1.md) y las pruebas están
 alineados con este documento. Implementación en `src/ai_assistant/domain/conversations/` (entidades y
 reglas) y `src/ai_assistant/application/` (casos de uso y puertos).
@@ -10,7 +12,8 @@ Fuentes: [SPEC-001](../specs/001-chat-texto.md), [arquitectura](../architecture.
 
 Decisiones documentadas antes de este modelo, que lo enmarcan:
 
-- La conversación es temporal y el historial solo existe durante la sesión; la UI comunica que no se persiste.
+- ~~La conversación es temporal y el historial solo existe durante la sesión.~~ Sustituido por
+  SPEC-002: las conversaciones se guardan en PostgreSQL.
 - Hay un único envío activo por conversación y un doble clic no inicia dos solicitudes.
 - Solo el evento de finalización confirma una respuesta completa.
 - Un error conserva el texto del usuario y muestra una explicación sin secretos técnicos.
@@ -27,6 +30,9 @@ classDiagram
     class Conversation {
         id : str
         created_at : datetime
+        updated_at : datetime
+        title : str?
+        title_is_custom : bool
         active_response_id : str?
     }
     class UserMessage {
@@ -62,7 +68,10 @@ expone en ISO 8601 con `Z`.
 | `id` | cadena opaca (hoy `uuid4().hex`) | Identificador. Los clientes no deben interpretarlo. |
 | `created_at` | fecha y hora UTC | Momento de creación. |
 | `messages` | lista ordenada | Mensajes del usuario y respuestas, en orden de creación. |
-| `active_response_id` | cadena o nulo | Respuesta en curso. Dato interno; no se expone. |
+| `active_response_id` | cadena o nulo | Respuesta en curso. Dato interno; no se expone ni se guarda (se deduce de la respuesta en `streaming`). |
+| `title` | cadena o nulo | Nulo hasta el primer mensaje; después, derivado de él (`derive_title`: espacios colapsados, como mucho 60 caracteres) o fijado por el usuario. |
+| `title_is_custom` | booleano | `true` si lo fijó el usuario (`rename`). Renombrar con nulo vuelve al derivado. Un título propio tiene de 1 a 120 caracteres, sin espacios en los extremos (`InvalidTitle`). |
+| `updated_at` | fecha y hora UTC | Última actividad: creación, envío de un mensaje o cambio de título. Ordena la lista. |
 
 ### UserMessage
 
@@ -138,7 +147,7 @@ Transiciones no permitidas: salir de un estado final o añadirle texto. El domin
 
 | # | Invariante | Dónde se garantiza |
 | --- | --- | --- |
-| I1 | Hay como mucho una respuesta en `streaming` por conversación, y `active_response_id` apunta a ella. | Dominio (`begin_turn`). Comprobar y reservar es atómico porque el servicio corre en un único bucle asyncio sin `await` en medio. |
+| I1 | Hay como mucho una respuesta en `streaming` por conversación, y `active_response_id` apunta a ella. | Dominio (`begin_turn`), sin `await` entre comprobar y reservar. Con PostgreSQL, cada petición tiene su copia y lo garantiza el índice único parcial `one_streaming_response_per_conversation`. |
 | I2 | Cada mensaje aceptado tiene exactamente una respuesta, creada en la misma operación. Un reintento es un mensaje nuevo (R4). | Dominio |
 | I3 | Una respuesta solo pasa a `completed` por confirmación del proveedor, nunca por llegar al final del flujo. | Caso de uso |
 | I4 | Los estados finales son inmutables, tanto el estado como el texto. | Dominio y caso de uso |
@@ -147,6 +156,8 @@ Transiciones no permitidas: salir de un estado final o añadirle texto. El domin
 | I7 | El proveedor solo se llama después de aceptar el envío, una vez por turno. Sin reintentos automáticos. | Caso de uso |
 | I8 | El modelo es obligatorio y no vacío. No se valida contra el catálogo: si no existe, el error llega del proveedor (`model_unavailable`). | Caso de uso |
 | I9 | Un envío aceptado se consume (`Turn.events()`), se cancela o se abandona (`Turn.close()`); si no, la conversación queda bloqueada hasta que se cancele. | Contrato interno de `Turn`; la capa HTTP debe cumplirlo |
+| I10 | Una conversación con una respuesta en curso no se puede borrar. | Dominio (`ensure_deletable`) |
+| I11 | Tras arrancar el backend no queda ninguna respuesta en `streaming` de una ejecución anterior. | Caso de uso de recuperación (supone un único proceso) |
 
 ## 4. Contenido parcial, cancelaciones y errores
 
@@ -183,30 +194,33 @@ Reglas:
 - Al completarse una respuesta del chat con el proveedor real, el adaptador marca `model_requested`
   como modelo con acceso comprobado (R9), igual que la CLI de la prueba.
 
-## 6. Temporal frente a persistente
+## 6. Persistencia (SPEC-002)
 
-Temporal:
+- Con `AI_ASSISTANT_DATABASE_URL`, conversaciones, mensajes y respuestas se guardan en PostgreSQL y
+  sobreviven a reinicios. Sin ella, viven en memoria y `persisted` vale `false`.
+- Se guardan todos los estados, también los parciales, fallidos y cancelados, con su texto. No se
+  guardan el mensaje de error ni `retryable`: salen de la tabla por código.
+- Cuándo se escribe: al aceptar un envío (mensaje, respuesta en `streaming` y título), en puntos de
+  control mientras llega texto (como mucho uno por segundo) y siempre al terminar, **antes** de
+  entregar el evento final. `cancel` responde cuando el estado cancelado está guardado.
+- Si el proceso cae a mitad de una respuesta, se pierde como mucho el texto del último segundo. Al
+  arrancar, esa respuesta pasa a `interrupted` (o `failed`, si no tenía texto) con el código
+  `interrupted` (I11).
+- Borrar es definitivo y elimina mensajes y respuestas (I10).
+- Ya persistía antes, porque es estado del adaptador y no del chat: credenciales cifradas, `host-id`
+  y el registro de modelos comprobados.
 
-- Todo lo anterior vive en la memoria del proceso del backend y se pierde al reiniciarlo.
-- No hay endpoints para leer el historial.
-- Desktop guarda su propia copia de vista durante la sesión, construida a partir de los eventos.
-
-Ya persiste, porque es estado del adaptador y no del chat: credenciales cifradas, `host-id` y el
-registro de modelos comprobados.
-
-Pendiente para una especificación de persistencia (etapa 2 de la visión), sin diseñar todavía:
-
-- Identidad del propietario y del dispositivo de origen.
-- Qué estados se guardan, incluidos los parciales y cancelados; retención y borrado.
-- Lectura del historial desde el servidor, orden y paginación.
-- Idempotencia de envíos repetidos por el cliente (p. ej. un `client_message_id`).
-- Trasladar la garantía de I1 del bucle asyncio al almacenamiento; el repositorio pasaría a ser asíncrono.
+Pendiente para especificaciones posteriores: identidad del propietario y del dispositivo de origen,
+retención automática, paginación y búsqueda, e idempotencia de envíos repetidos por el cliente
+(p. ej. un `client_message_id`).
 
 ## 7. Correspondencia con el contrato chat-v1
 
 | Modelo | Contrato chat-v1 |
 | --- | --- |
-| `Conversation.id`, `created_at` | `POST /v1/conversations` → `conversation_id`, `created_at`, `persisted: false` |
+| `Conversation.id`, `created_at` | `POST /v1/conversations` → `conversation_id`, `created_at`, `persisted` |
+| `title`, `title_is_custom`, `updated_at` | `GET /v1/conversations`, `GET` y `PATCH /v1/conversations/{id}` |
+| `Conversation.messages` | `GET /v1/conversations/{id}` → `messages` (`role: user` / `assistant`) |
 | `UserMessage.id` | `message.accepted.message_id` |
 | `AssistantResponse.id` | `response_id` en todos los eventos |
 | `in_reply_to` | `message.accepted` une `message_id` con `response_id` |

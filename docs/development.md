@@ -1,13 +1,15 @@
 # Desarrollo local
 
 Estado: verificado en Windows 11 el 2026-10-29 para la prueba de viabilidad del proveedor y el
-servidor HTTP con el proveedor simulado ([SPEC-001](specs/001-chat-texto.md)). No hay despliegue.
+servidor HTTP con el proveedor simulado ([SPEC-001](specs/001-chat-texto.md)), y el 2026-10-30 para
+PostgreSQL ([SPEC-002](specs/002-persistencia-conversaciones.md)). No hay despliegue.
 
 ## Requisitos
 
 - Windows con Python 3.12 (`py -3.12`). Las dependencias se fijan en [pyproject.toml](../pyproject.toml).
 - Proxy local hacia el VPS escuchando en `http://127.0.0.1:17890` (túnel SSH ya existente).
 - Un perfil de Chrome que use ese proxy.
+- Docker Desktop, para PostgreSQL (ver [Base de datos](#base-de-datos-postgresql-spec-002)).
 
 ## Red y proxy
 
@@ -28,6 +30,8 @@ httpx con `trust_env=False` y rutas explícitas. El dominio no conoce estos ajus
 | `AI_ASSISTANT_OAUTH_PORT` | opcional | Puerto del callback; por defecto `1455`. |
 | `AI_ASSISTANT_PROVIDER` | `fake` (por defecto) o `chatgpt_plan` | Proveedor del servidor HTTP. `fake` no consume el plan. |
 | `AI_ASSISTANT_API_PORT` | opcional | Puerto del servidor HTTP; por defecto `8000`. |
+| `AI_ASSISTANT_DATABASE_URL` | `postgresql://ai_assistant:…@127.0.0.1:5432/ai_assistant` | Activa PostgreSQL. Sin ella, las conversaciones viven en memoria. |
+| `AI_ASSISTANT_TEST_DATABASE_URL` | igual, con la base `ai_assistant_test` | Solo para las pruebas con PostgreSQL. |
 
 El callback OAuth (`http://127.0.0.1:1455/auth/callback`) es una conexión **entrante** a un servidor
 local de un solo uso: no pasa por el proxy del backend. En Chrome, las direcciones loopback se omiten
@@ -70,7 +74,8 @@ py -3.12 -m venv .venv
 Usan transportes simulados de httpx, una clave RSA generada para firmar ID tokens de prueba, un
 listener loopback efímero y un servidor uvicorn en un puerto local libre (cancelación y desconexión
 reales a mitad del stream). Pasan también con el proxy apuntando a un puerto inexistente.
-Las pruebas de DPAPI y de la CLI se omiten fuera de Windows.
+Las pruebas de DPAPI y de la CLI se omiten fuera de Windows. Las de PostgreSQL se omiten sin
+`AI_ASSISTANT_TEST_DATABASE_URL` (ver [Pruebas con PostgreSQL](#pruebas-con-postgresql)).
 
 ## Prueba real con la cuenta (manual)
 
@@ -123,11 +128,66 @@ Códigos de salida: `0` correcto, `1` fallo del proveedor o respuesta incompleta
 Registrar el resultado en [docs/evidence](evidence/001-viabilidad-proveedor.md) sin tokens, URLs de
 autorización, correo ni identificadores de cuenta.
 
+## Base de datos (PostgreSQL, SPEC-002)
+
+PostgreSQL 18.6 corre en un contenedor de Docker Compose ([docker-compose.yml](../docker-compose.yml)),
+escuchando **solo en `127.0.0.1:5432`** y con los datos en el volumen `ai-assistant_postgres-data`.
+Al crear el volumen se crean dos bases de datos: `ai_assistant` (la del servidor) y
+`ai_assistant_test` (la de las pruebas, que se vacía en cada prueba).
+
+Requisito: Docker Desktop arrancado. Verificado el 2026-10-30 con Docker 29.1.3.
+
+### Primera vez
+
+La contraseña va en `.env`, que Git ignora. Partir de la plantilla y poner una contraseña propia
+(en este equipo ya existe un `.env` con una contraseña aleatoria):
+
+```powershell
+cd "D:\Proyecto Jarvis\AI-assistant-backend"
+Copy-Item .env.example .env   # y editar POSTGRES_PASSWORD
+docker compose up -d
+```
+
+`docker compose ps` debe mostrar el servicio `healthy`. Para pararlo, `docker compose stop` (conserva
+los datos). `docker compose down -v` **borra el volumen y todas las conversaciones**.
+
+### En cada terminal
+
+El backend lee la conexión de `AI_ASSISTANT_DATABASE_URL`. Construirla a partir de `.env`, sin
+escribir la contraseña en ningún otro sitio:
+
+```powershell
+$pw = (Select-String -Path .env -Pattern '^POSTGRES_PASSWORD=(.*)$').Matches[0].Groups[1].Value
+$env:AI_ASSISTANT_DATABASE_URL = "postgresql://ai_assistant:$pw@127.0.0.1:5432/ai_assistant"
+```
+
+Aplicar las migraciones (la primera vez y cada vez que el código traiga una nueva). El servidor se
+niega a arrancar si el esquema no está al día:
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_assistant.infrastructure.tools.migrate
+```
+
+Sin `AI_ASSISTANT_DATABASE_URL`, el servidor funciona en memoria: el mensaje de arranque lo indica y
+la API responde `persisted: false`.
+
+### Pruebas con PostgreSQL
+
+Las pruebas del repositorio PostgreSQL, de migraciones y de reinicio del servidor se omiten si no
+existe `AI_ASSISTANT_TEST_DATABASE_URL`. Para ejecutarlas:
+
+```powershell
+$env:AI_ASSISTANT_TEST_DATABASE_URL = "postgresql://ai_assistant:$pw@127.0.0.1:5432/ai_assistant_test"
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+Nunca apuntar `AI_ASSISTANT_TEST_DATABASE_URL` a `ai_assistant`: las pruebas vacían las tablas.
+
 ## Servidor HTTP (contrato chat-v1)
 
 Implementa [chat-v1](api/chat-v1.md). Escucha **solo en `127.0.0.1`**: la API no tiene autenticación
 y el host no es configurable a propósito. Si se actualiza desde una versión anterior, repetir el
-`pip install` de la instalación (añade FastAPI y uvicorn).
+`pip install` de la instalación (añade FastAPI, uvicorn, SQLAlchemy, asyncpg y Alembic).
 
 Con el proveedor simulado (por defecto; no usa red ni el plan):
 
@@ -146,7 +206,9 @@ $env:AI_ASSISTANT_PROVIDER = 'chatgpt_plan'
 .\.venv\Scripts\python.exe -m ai_assistant.infrastructure.bootstrap.server
 ```
 
-Se detiene con Ctrl+C. Las conversaciones se pierden al detenerlo.
+Se detiene con Ctrl+C. Con `AI_ASSISTANT_DATABASE_URL` definida (ver la sección anterior), las
+conversaciones se guardan en PostgreSQL y siguen ahí al volver a arrancarlo; sin ella, se pierden.
+Al arrancar, las respuestas que quedaron a medias por una caída se marcan como interrumpidas.
 
 Probarlo desde otra terminal de PowerShell (`curl.exe`, no el alias `curl`; `--noproxy "*"` evita que
 la petición local pase por el proxy):

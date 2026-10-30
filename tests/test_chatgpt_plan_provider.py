@@ -156,8 +156,8 @@ def test_cancel_while_waiting_for_provider_closes_http_stream():
             repository = InMemoryConversationRepository()
             service = ChatService(repository, ChatGptPlanProvider(http, FakeSession(), refresh_http=None),
                                   SystemClock())
-            conversation = repository.get(service.start_conversation().conversation_id)
-            turn = service.send(conversation.id, "gpt-6-luna", "hola")
+            conversation = await repository.get((await service.start_conversation()).conversation_id)
+            turn = await service.send(conversation.id, "gpt-6-luna", "hola")
             events = turn.events()
             await anext(events)
             assert await anext(events) == ResponseDelta(turn.response_id, "parcial")

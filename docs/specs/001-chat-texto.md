@@ -35,6 +35,8 @@ no cambiar automáticamente a una API de pago. El desarrollo con un proveedor si
 - Si queda texto parcial, se marca como interrumpido o cancelado.
 - Sin reintento automático de una generación parcialmente recibida.
 - El historial solo existe durante la sesión; la UI debe comunicar que no se persiste todavía.
+  **Sustituido por [SPEC-002](002-persistencia-conversaciones.md) (2026-10-30)**: las conversaciones se
+  guardan en PostgreSQL. La UI solo avisa si el backend responde `persisted: false`.
 
 ## Criterios de aceptación
 

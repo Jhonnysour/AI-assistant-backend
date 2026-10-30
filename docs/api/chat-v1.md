@@ -14,8 +14,9 @@ incompatibles requieren `/v2`.
   con `fetch`.
 - **Cancelación explícita** con su propio endpoint, para distinguir "el usuario canceló" de "se cortó
   la conexión".
-- La conversación es **temporal**: vive en memoria del proceso y se pierde al reiniciarlo. La UI debe
-  indicarlo.
+- Las conversaciones se **guardan en PostgreSQL** desde [SPEC-002](../specs/002-persistencia-conversaciones.md)
+  (2026-10-30): se pueden listar, leer, renombrar y borrar. Si el backend arranca sin base de datos,
+  viven en memoria y `persisted` vale `false`; la UI debe indicarlo en ese caso.
 - **Autenticación:** ninguna mientras el backend escuche solo en `127.0.0.1`. Es obligatoria antes de
   exponerlo en el VPS (diseño pendiente).
 - Las credenciales del proveedor nunca salen del backend.
@@ -27,13 +28,78 @@ incompatibles requieren `/v2`.
 - Los errores fuera del stream responden con `{"error": {"code": "...", "message": "..."}}`. El
   `message` está en español, se puede mostrar al usuario y no contiene detalles técnicos ni secretos.
   Un fallo inesperado en cualquier endpoint responde `500` con `internal_error`.
+- Si la base de datos no responde, cualquier endpoint responde `503` con `storage_unavailable`.
 
 ## Endpoints
 
 ### `POST /v1/conversations`
 
-Crea una conversación temporal.
-`201` → `{"conversation_id": "…", "created_at": "…", "persisted": false}`
+Crea una conversación.
+`201` → `{"conversation_id": "…", "created_at": "…", "persisted": true}`
+
+`persisted` es `false` si el backend funciona sin base de datos.
+
+### `GET /v1/conversations`
+
+Lista las conversaciones por última actividad (`updated_at`: creación, envío de un mensaje o cambio
+de título), la más reciente primero. Sin paginación en v1.
+
+`200` →
+```json
+{"conversations": [
+  {"conversation_id": "…", "title": "Planes para el sábado", "title_is_custom": false,
+   "created_at": "…", "updated_at": "…"}
+]}
+```
+
+- `title` es nulo hasta el primer mensaje. Después se deriva de él (espacios colapsados, como mucho
+  60 caracteres, con `…` si se recorta), salvo que el usuario lo cambie (`title_is_custom: true`).
+
+### `GET /v1/conversations/{conversation_id}`
+
+Devuelve la conversación con su historial, en orden: cada mensaje del usuario seguido de su respuesta.
+
+`200` →
+```json
+{"conversation_id": "…", "title": "…", "title_is_custom": false, "created_at": "…", "updated_at": "…",
+ "persisted": true,
+ "messages": [
+  {"role": "user", "message_id": "…", "text": "Hola", "created_at": "…"},
+  {"role": "assistant", "response_id": "…", "in_reply_to": "…", "text": "…", "status": "completed",
+   "error": null, "model_requested": "gpt-6-luna", "model_reported": "gpt-6-luna",
+   "created_at": "…", "finished_at": "…"}
+]}
+```
+
+- `status` es uno de los estados de la respuesta: `streaming`, `completed`, `failed`, `interrupted`
+  o `cancelled`.
+- `error` es `{"code", "message"}` si la respuesta terminó con error; `retryable` no se guarda.
+- Una respuesta en `streaming` muestra el texto del último punto de control (como mucho 1 s por
+  detrás del stream).
+- `404 conversation_not_found` si no existe.
+
+### `PATCH /v1/conversations/{conversation_id}`
+
+Petición: `{"title": "Sábado"}` para un título propio, o `{"title": null}` para volver al derivado.
+El campo es obligatorio.
+
+`200` → el resumen de la conversación, con el mismo formato que en la lista.
+
+| HTTP | `code` | Caso |
+| --- | --- | --- |
+| 400 | `invalid_title` | Vacío, con espacios en los extremos o de más de 120 caracteres. |
+| 400 | `invalid_request` | Falta `title` o el cuerpo no es válido. |
+| 404 | `conversation_not_found` | No existe. |
+
+### `DELETE /v1/conversations/{conversation_id}`
+
+Borra la conversación con todos sus mensajes y respuestas. **Es definitivo.**
+
+| HTTP | `code` | Caso |
+| --- | --- | --- |
+| 204 | — | Borrada. |
+| 404 | `conversation_not_found` | No existe. |
+| 409 | `send_in_progress` | Hay una respuesta en curso: primero hay que cancelarla. |
 
 ### `GET /v1/models`
 
@@ -87,7 +153,7 @@ Cancela una respuesta en curso. Sin cuerpo.
 
 | HTTP | `code` | Caso |
 | --- | --- | --- |
-| 204 | — | Cancelada. La conversación ya admite un envío nuevo. |
+| 204 | — | Cancelada y guardada. La conversación ya admite un envío nuevo. |
 | 404 | `conversation_not_found` / `response_not_found` | No existe. |
 | 409 | `response_not_active` | La respuesta ya había terminado; conserva su estado final. |
 
@@ -174,5 +240,5 @@ fallidas, interrumpidas o canceladas, y sus preguntas, no se reenvían.
 
 ## Fuera de v1
 
-Persistencia, listado de conversaciones o historial desde el servidor, autenticación de la API,
-adjuntos y límite de longitud del mensaje.
+Paginación y búsqueda de conversaciones, autenticación de la API, adjuntos, límite de longitud del
+mensaje e idempotencia de envíos repetidos.
