@@ -32,6 +32,7 @@ erDiagram
         uuid in_reply_to FK "único"
         text model_requested
         text model_reported
+        text provider
         text status
         text error_code
         text text
@@ -71,6 +72,7 @@ erDiagram
 | `in_reply_to` | `uuid` | Referencia a `user_messages`, `ON DELETE CASCADE`. **Única**: un mensaje tiene exactamente una respuesta (I2). |
 | `model_requested` | `text` | |
 | `model_reported` | `text`, nulo | |
+| `provider` | `text` | Adaptador que generó la respuesta: `fake`, `chatgpt_plan`… Las filas anteriores a la migración `0002` valen `unknown`. |
 | `status` | `text` | `CHECK` con los cinco estados de `ResponseStatus`. |
 | `error_code` | `text`, nulo | Código de `application/error_codes.py`. |
 | `text` | `text` | Texto acumulado; en `streaming`, el del último punto de control. |
@@ -87,6 +89,9 @@ varias peticiones simultáneas: el segundo envío falla al insertar y el adaptad
 - **Dos tablas para mensajes**, como en el dominio (R10): los mensajes y las respuestas tienen campos
   distintos, y la relación 1:1 queda explícita con `in_reply_to` único. El orden de la conversación
   es el de `user_messages.position`, con cada respuesta detrás de su mensaje.
+- **Proveedor en cada respuesta** (migración `0002`, 2026-10-30): para distinguir respuestas simuladas
+  de reales y preparar la selección de proveedores con presupuesto de la visión. Es un dato que no se
+  podría reconstruir después. El consumo de tokens se añadirá con la especificación de presupuesto.
 - **No se guarda `active_response_id`**: se deduce de la respuesta en `streaming`.
 - **No se guardan el mensaje de error ni `retryable`**: el mensaje sale de la tabla por código, como en
   el stream.

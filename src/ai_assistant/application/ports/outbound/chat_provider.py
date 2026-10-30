@@ -34,6 +34,8 @@ ProviderEvent = TextChunk | ProviderCompleted | ProviderFailed
 
 
 class ChatProvider(Protocol):
+    name: str  # Identifica el proveedor en cada respuesta guardada; estable entre versiones.
+
     def stream_reply(self, model: str, history: Sequence[ProviderMessage]) -> AsyncIterator[ProviderEvent]:
         """Genera fragmentos y termina con ProviderCompleted o ProviderFailed.
 

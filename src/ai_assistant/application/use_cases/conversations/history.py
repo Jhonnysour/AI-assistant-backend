@@ -28,7 +28,7 @@ def _view(item: UserMessage | AssistantResponse) -> UserMessageView | AssistantR
     return AssistantResponseView(
         item.id, item.in_reply_to, item.text, item.status.value, item.error_code,
         user_message(item.error_code) if item.error_code else None,
-        item.model_requested, item.model_reported, item.created_at, item.finished_at,
+        item.model_requested, item.model_reported, item.provider, item.created_at, item.finished_at,
     )
 
 

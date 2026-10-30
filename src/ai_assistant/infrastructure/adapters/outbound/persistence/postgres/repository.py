@@ -117,7 +117,7 @@ class PostgresConversationRepository:
                 ))
                 await db.execute(insert(assistant_responses).values(
                     id=_uuid(reply.id), conversation_id=key, in_reply_to=_uuid(user.id),
-                    **_response_values(reply), created_at=reply.created_at,
+                    provider=reply.provider, **_response_values(reply), created_at=reply.created_at,
                 ))
                 await db.execute(_details_update(conversation))
         except IntegrityError as error:
@@ -176,7 +176,7 @@ def _conversation(header: Row, users: list[Row], replies: list[Row]) -> Conversa
         status = ResponseStatus(reply.status)
         messages.append(AssistantResponse(
             id=reply.id.hex, in_reply_to=row.id.hex, model_requested=reply.model_requested,
-            created_at=reply.created_at, text=reply.text, status=status, error_code=reply.error_code,
+            provider=reply.provider, created_at=reply.created_at, text=reply.text, status=status, error_code=reply.error_code,
             model_reported=reply.model_reported, finished_at=reply.finished_at,
         ))
         if status is ResponseStatus.STREAMING:

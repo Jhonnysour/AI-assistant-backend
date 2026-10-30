@@ -49,6 +49,7 @@ classDiagram
         error_code : str?
         model_requested : str
         model_reported : str?
+        provider : str
         created_at : datetime
         finished_at : datetime?
     }
@@ -93,6 +94,7 @@ expone en ISO 8601 con `Z`.
 | `error_code` | cadena o nulo | Código del puerto (`usage_limit`, `interrupted`, …) si terminó en error. |
 | `model_requested` | slug | Modelo pedido al proveedor (`gpt-6-luna`). |
 | `model_reported` | cadena o nulo | Modelo que el proveedor declara haber usado (sección 5). |
+| `provider` | cadena | Proveedor que la generó (`ChatProvider.name`: `fake`, `chatgpt_plan`). `unknown` en respuestas guardadas antes de registrarlo. |
 | `created_at` | fecha y hora UTC | Momento de aceptación del turno (igual al del mensaje). |
 | `finished_at` | fecha y hora UTC o nulo | Momento en que alcanzó un estado final. |
 
@@ -224,7 +226,7 @@ retención automática, paginación y búsqueda, e idempotencia de envíos repet
 | `UserMessage.id` | `message.accepted.message_id` |
 | `AssistantResponse.id` | `response_id` en todos los eventos |
 | `in_reply_to` | `message.accepted` une `message_id` con `response_id` |
-| `AssistantResponse.created_at`, `model_requested` | `message.accepted.created_at`, `model_requested` |
+| `AssistantResponse.created_at`, `model_requested`, `provider` | `message.accepted.created_at`, `model_requested`, `provider` |
 | `text` | Suma de los `response.delta.text` |
 | `completed` | `response.completed` (`finished_at`, `model_reported`) |
 | `failed` / `interrupted` | `response.failed` (`status`, `finished_at`, `model_reported`, `error`) |

@@ -92,7 +92,7 @@ class Turn:
         self._started = True
         try:
             yield MessageAccepted(self.message_id, self.response_id, self._reply.created_at,
-                                  self._reply.model_requested)
+                                  self._reply.model_requested, self._reply.provider)
             if self.active:
                 self._last_checkpoint = asyncio.get_running_loop().time()
                 self._pump = self._service._spawn(self._consume_provider())
@@ -244,7 +244,7 @@ class ChatService:
         if not model or not model.strip():
             raise InvalidRequest("Falta el modelo.")
         conversation = await self._get(conversation_id)
-        user, reply = conversation.begin_turn(text, model.strip(), self._now())
+        user, reply = conversation.begin_turn(text, model.strip(), self._now(), provider=self._provider.name)
         await self._conversations.add_turn(conversation, user, reply)
         history = [_provider_message(item) for item in conversation.context_for(reply.id)]
         turn = Turn(self, conversation, user, reply, history)

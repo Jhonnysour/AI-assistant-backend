@@ -64,6 +64,7 @@ assistant_responses = Table(
            nullable=False, unique=True),
     Column("model_requested", Text, nullable=False),
     Column("model_reported", Text),
+    Column("provider", Text, nullable=False),
     Column("status", Text, nullable=False),
     Column("error_code", Text),
     Column("text", Text, nullable=False, server_default=""),

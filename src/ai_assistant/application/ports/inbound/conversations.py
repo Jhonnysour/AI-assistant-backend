@@ -89,6 +89,7 @@ class AssistantResponseView:
     error_message: str | None  # Se puede mostrar al usuario.
     model_requested: str
     model_reported: str | None
+    provider: str
     created_at: datetime
     finished_at: datetime | None
 
@@ -106,6 +107,7 @@ class MessageAccepted:
     response_id: str
     created_at: datetime
     model_requested: str
+    provider: str
 
 
 @dataclass(frozen=True)

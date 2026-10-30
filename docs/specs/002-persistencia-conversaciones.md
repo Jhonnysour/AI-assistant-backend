@@ -17,6 +17,7 @@ del backend. El cliente puede listarlas, leer su historial, renombrarlas y borra
 | P2 | Puntos de control durante el streaming: se guarda al aceptar el envío, como mucho una vez por segundo mientras llega texto, y siempre al terminar. |
 | P3 | Endpoints nuevos: listar, ver historial, renombrar y borrar conversaciones. |
 | P4 | Sin cifrado propio en v1. La base de datos solo escucha en `127.0.0.1`, la contraseña va en `.env` (fuera de Git) y la protección en reposo depende del disco (BitLocker). El cifrado propio se decide antes del VPS. |
+| P5 | Cada respuesta guarda el proveedor que la generó (`provider`), tras revisar la documentación de los tres repositorios: distingue respuestas simuladas de reales y prepara la selección de proveedores. Migración `0002`; las filas anteriores quedan como `unknown`. |
 
 ## Propuestas del agente incluidas (revisables)
 
@@ -71,8 +72,8 @@ automática, idempotencia de envíos repetidos (`client_message_id`), cifrado pr
 ## Resultado (2026-10-30)
 
 Entorno: Windows 11, Python 3.12, Docker 29.1.3, PostgreSQL 18.6, SQLAlchemy 2.1.6, asyncpg 0.32.0,
-Alembic 1.20.1. Suite completa: 136 pruebas con PostgreSQL; sin `AI_ASSISTANT_TEST_DATABASE_URL`,
-127 y 9 omitidas. Las pruebas asíncronas y de base de datos, repetidas 3 veces con el mismo resultado.
+Alembic 1.20.1. Suite completa: 137 pruebas con PostgreSQL; sin `AI_ASSISTANT_TEST_DATABASE_URL`,
+127 y 10 omitidas (tras añadir `provider`). Las pruebas asíncronas y de base de datos, repetidas 3 veces con el mismo resultado.
 
 | ID | Resultado | Cómo |
 | --- | --- | --- |

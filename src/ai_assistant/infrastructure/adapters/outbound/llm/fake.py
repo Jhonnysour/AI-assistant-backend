@@ -23,6 +23,8 @@ class FakeChatProvider:
     Sin guion, responde en fragmentos repitiendo el último mensaje del usuario.
     """
 
+    name = "fake"
+
     def __init__(self, script: Sequence[ScriptItem] | None = None, delay_seconds: float = 0.0) -> None:
         self.script = script
         self._delay = delay_seconds

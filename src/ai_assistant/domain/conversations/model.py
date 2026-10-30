@@ -83,6 +83,7 @@ class AssistantResponse:
     id: str
     in_reply_to: str
     model_requested: str
+    provider: str  # Adaptador que generó la respuesta ("fake", "chatgpt_plan"…).
     created_at: datetime
     text: str = ""
     status: ResponseStatus = ResponseStatus.STREAMING
@@ -134,14 +135,15 @@ class Conversation:
         users = [m.id for m in self.messages if isinstance(m, UserMessage)]
         return users.index(message_id)
 
-    def begin_turn(self, text: str, model: str, at: datetime) -> tuple[UserMessage, AssistantResponse]:
+    def begin_turn(self, text: str, model: str, at: datetime, *,
+                   provider: str) -> tuple[UserMessage, AssistantResponse]:
         """Acepta un mensaje del usuario y crea su respuesta en curso. Un envío activo a la vez."""
         if not text.strip():
             raise EmptyMessage("El mensaje está vacío.")
         if self.active_response_id is not None:
             raise SendInProgress("Ya hay una respuesta en curso en esta conversación.")
         user = UserMessage(new_id(), text, at)
-        reply = AssistantResponse(new_id(), user.id, model, at)
+        reply = AssistantResponse(new_id(), user.id, model, provider, at)
         self.messages += [user, reply]
         self.active_response_id = reply.id
         if self.title is None:

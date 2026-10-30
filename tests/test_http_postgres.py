@@ -57,7 +57,7 @@ def test_pc03_response_left_streaming_is_interrupted_on_startup(clean_postgres):
             repository = PostgresConversationRepository(engine)
             conversation = Conversation.start(datetime.now(timezone.utc))
             await repository.add(conversation)
-            user, reply = conversation.begin_turn("hola", "m", datetime.now(timezone.utc))
+            user, reply = conversation.begin_turn("hola", "m", datetime.now(timezone.utc), provider="fake")
             await repository.add_turn(conversation, user, reply)
             conversation.append_text(reply.id, "parcial")
             await repository.save_response(conversation.id, reply)  # Último punto de control.

@@ -100,6 +100,7 @@ def test_send_streams_events_until_completed(backend, client):
     assert set(names[1:-1]) == {"response.delta"}
     accepted, completed = events[0][1], events[-1][1]
     assert accepted["model_requested"] == "gpt-6-luna" and accepted["created_at"].endswith("Z")
+    assert accepted["provider"] == "fake"
     assert completed["response_id"] == accepted["response_id"] and completed["finished_at"].endswith("Z")
     text = "".join(data["text"] for name, data in events if name == "response.delta")
     assert text == "Respuesta simulada a: Saluda"
@@ -266,6 +267,7 @@ def test_list_get_rename_delete_endpoints(client):
     assert (reply["role"], reply["status"], reply["in_reply_to"], reply["error"]) == (
         "assistant", "completed", user["message_id"], None)
     assert reply["text"] == "Respuesta simulada a: Planes para el sábado" and reply["finished_at"]
+    assert reply["provider"] == "fake"
 
     renamed = client.patch(f"/v1/conversations/{conversation_id}", json={"title": "Sábado"})
     assert (renamed.status_code, renamed.json()["title"], renamed.json()["title_is_custom"]) == (200, "Sábado", True)

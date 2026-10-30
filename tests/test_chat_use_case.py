@@ -107,13 +107,14 @@ def test_ac02_chunks_then_completed_with_dates_and_models():
     events = asyncio.run(collect(turn))
     reply = reply_of(conversation)
     assert events == [
-        MessageAccepted(turn.message_id, turn.response_id, reply.created_at, "gpt-6-luna"),
+        MessageAccepted(turn.message_id, turn.response_id, reply.created_at, "gpt-6-luna", "fake"),
         ResponseDelta(turn.response_id, "Hola, "),
         ResponseDelta(turn.response_id, "mundo"),
         ResponseCompleted(turn.response_id, reply.finished_at, "gpt-6-luna-reported"),
     ]
     assert (reply.text, reply.status) == ("Hola, mundo", ResponseStatus.COMPLETED)
     assert (reply.model_requested, reply.model_reported) == ("gpt-6-luna", "gpt-6-luna-reported")
+    assert reply.provider == "fake"
     assert conversation.created_at < reply.created_at < reply.finished_at
     assert reply.created_at.tzinfo is timezone.utc
     assert provider.calls[0][0] == "gpt-6-luna"

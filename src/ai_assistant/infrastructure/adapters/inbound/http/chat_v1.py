@@ -121,6 +121,7 @@ def to_sse(event: ChatEvent) -> ServerSentEvent:
         return ServerSentEvent(event="message.accepted", data={
             "message_id": event.message_id, "response_id": event.response_id,
             "created_at": iso(event.created_at), "model_requested": event.model_requested,
+            "provider": event.provider,
         })
     if isinstance(event, ResponseDelta):
         return ServerSentEvent(event="response.delta", data={"response_id": event.response_id, "text": event.text})
@@ -157,7 +158,7 @@ def message_json(item) -> dict:
             "role": "assistant", "response_id": item.response_id, "in_reply_to": item.in_reply_to,
             "text": item.text, "status": item.status, "error": error,
             "model_requested": item.model_requested, "model_reported": item.model_reported,
-            "created_at": iso(item.created_at), "finished_at": iso(item.finished_at),
+            "provider": item.provider, "created_at": iso(item.created_at), "finished_at": iso(item.finished_at),
         }
     return {"role": "user", "message_id": item.message_id, "text": item.text, "created_at": iso(item.created_at)}
 

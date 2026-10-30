@@ -124,10 +124,10 @@ def test_pc03_recovery_closes_responses_left_streaming():
         with_text, without_text, finished = (Conversation.start(START) for _ in range(3))
         for conversation in (with_text, without_text, finished):
             await repository.add(conversation)
-        reply = with_text.begin_turn("a", "m", START)[1]
+        reply = with_text.begin_turn("a", "m", START, provider="fake")[1]
         with_text.append_text(reply.id, "parcial")
-        without_text.begin_turn("b", "m", START)
-        done = finished.begin_turn("c", "m", START)[1]
+        without_text.begin_turn("b", "m", START, provider="fake")
+        done = finished.begin_turn("c", "m", START, provider="fake")[1]
         finished.complete(done.id, START)
 
         assert await RecoverInterruptedResponses(repository, StepClock()).run() == 2

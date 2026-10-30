@@ -53,6 +53,8 @@ class ChatGptPlanProvider:
     Si se pasa model_log, cada respuesta completada marca el modelo pedido como comprobado.
     """
 
+    name = "chatgpt_plan"
+
     def __init__(self, http: httpx.AsyncClient, session: ChatGptPlanSession,
                  refresh_http: httpx.Client, model_log: ModelAccessLog | None = None) -> None:
         self._http = http

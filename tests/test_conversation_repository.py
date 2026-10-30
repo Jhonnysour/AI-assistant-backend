@@ -65,7 +65,7 @@ def test_turns_are_stored_in_order_with_their_responses(repository_factory):
     async def scenario(repo):
         conversation = Conversation.start(at(0))
         await repo.add(conversation)
-        user, reply = conversation.begin_turn("  primera  pregunta ", "gpt-6-luna", at(1))
+        user, reply = conversation.begin_turn("  primera  pregunta ", "gpt-6-luna", at(1), provider="fake")
         await repo.add_turn(conversation, user, reply)
 
         loaded = await repo.get(conversation.id)
@@ -79,7 +79,7 @@ def test_turns_are_stored_in_order_with_their_responses(repository_factory):
 
         conversation.complete(reply.id, at(2), "gpt-6-luna-x")
         await repo.save_response(conversation.id, reply)
-        user2, reply2 = conversation.begin_turn("segunda", "m", at(3))
+        user2, reply2 = conversation.begin_turn("segunda", "m", at(3), provider="fake")
         await repo.add_turn(conversation, user2, reply2)
         conversation.fail(reply2.id, codes.USAGE_LIMIT, at(4))
         await repo.save_response(conversation.id, reply2)
@@ -89,6 +89,7 @@ def test_turns_are_stored_in_order_with_their_responses(repository_factory):
         assert [type(m).__name__ for m in loaded.messages] == [
             "UserMessage", "AssistantResponse", "UserMessage", "AssistantResponse"]
         first, second = loaded.response(reply.id), loaded.response(reply2.id)
+        assert first.provider == second.provider == "fake"
         assert (first.status, first.model_reported, first.finished_at) == (ResponseStatus.COMPLETED, "gpt-6-luna-x", at(2))
         assert (second.status, second.error_code) == (ResponseStatus.FAILED, codes.USAGE_LIMIT)
         assert loaded.active_response_id is None
@@ -102,7 +103,7 @@ def test_list_details_delete_and_active_responses(repository_factory):
             await repo.add(conversation)
         recent.rename("Mi título", at(10))
         await repo.save_details(recent)
-        user, reply = busy.begin_turn("en curso", "m", at(5))
+        user, reply = busy.begin_turn("en curso", "m", at(5), provider="fake")
         await repo.add_turn(busy, user, reply)
 
         headers = await repo.list_recent()
@@ -136,8 +137,8 @@ def test_pc02_concurrent_sends_from_two_copies_only_one_is_accepted(clean_postgr
         await repo.add(conversation)
         first, second = await repo.get(conversation.id), await repo.get(conversation.id)
         assert first is not second
-        turn_a = first.begin_turn("uno", "m", at(1))  # Cada copia cree que no hay nada en curso.
-        turn_b = second.begin_turn("dos", "m", at(1))
+        turn_a = first.begin_turn("uno", "m", at(1), provider="fake")  # Cada copia cree que no hay nada en curso.
+        turn_b = second.begin_turn("dos", "m", at(1), provider="fake")
         results = await asyncio.gather(repo.add_turn(first, *turn_a), repo.add_turn(second, *turn_b),
                                        return_exceptions=True)
         assert sorted(type(r).__name__ for r in results) == ["NoneType", "SendInProgress"]
@@ -147,7 +148,7 @@ def test_pc02_concurrent_sends_from_two_copies_only_one_is_accepted(clean_postgr
         # Una vez terminada la respuesta, el siguiente envío se acepta.
         loaded.cancel(loaded.active_response_id, at(2))
         await repo.save_response(loaded.id, loaded.messages[1])
-        await repo.add_turn(loaded, *loaded.begin_turn("tres", "m", at(3)))
+        await repo.add_turn(loaded, *loaded.begin_turn("tres", "m", at(3), provider="fake"))
     postgres_run(clean_postgres, scenario)
 
 
@@ -156,12 +157,12 @@ def test_stale_copy_cannot_reuse_a_position(clean_postgres):
         conversation = Conversation.start(at(0))
         await repo.add(conversation)
         stale = await repo.get(conversation.id)
-        user, reply = conversation.begin_turn("uno", "m", at(1))
+        user, reply = conversation.begin_turn("uno", "m", at(1), provider="fake")
         await repo.add_turn(conversation, user, reply)
         conversation.complete(reply.id, at(2))
         await repo.save_response(conversation.id, reply)
         with pytest.raises(SendInProgress):  # La copia vieja no sabe que ya hubo un turno.
-            await repo.add_turn(stale, *stale.begin_turn("dos", "m", at(3)))
+            await repo.add_turn(stale, *stale.begin_turn("dos", "m", at(3), provider="fake"))
     postgres_run(clean_postgres, scenario)
 
 
@@ -191,3 +192,44 @@ def test_migrations_match_table_definitions(postgres_url):
         finally:
             await engine.dispose()
     asyncio.run(revision())
+
+
+def test_migration_0002_marks_existing_responses_with_unknown_provider(clean_postgres):
+    import uuid
+
+    from alembic import command
+    from sqlalchemy import text
+
+    from ai_assistant.infrastructure.adapters.outbound.persistence.postgres import schema
+
+    config = schema.alembic_config(clean_postgres)
+    command.downgrade(config, "0001")
+    try:
+        async def insert_old_response():
+            engine = create_engine(clean_postgres)
+            try:
+                async with engine.begin() as db:
+                    conversation, message = uuid.uuid4(), uuid.uuid4()
+                    await db.execute(text(
+                        "INSERT INTO conversations (id, created_at, updated_at) VALUES (:c, now(), now())"),
+                        {"c": conversation})
+                    await db.execute(text(
+                        "INSERT INTO user_messages (id, conversation_id, position, text, created_at) "
+                        "VALUES (:m, :c, 0, 'hola', now())"), {"m": message, "c": conversation})
+                    await db.execute(text(
+                        "INSERT INTO assistant_responses (id, conversation_id, in_reply_to, model_requested, "
+                        "status, text, created_at, finished_at) "
+                        "VALUES (:r, :c, :m, 'm', 'completed', 'x', now(), now())"),
+                        {"r": uuid.uuid4(), "c": conversation, "m": message})
+                return conversation.hex
+            finally:
+                await engine.dispose()
+
+        conversation_id = asyncio.run(insert_old_response())
+    finally:
+        command.upgrade(config, "head")
+    postgres_run(clean_postgres, lambda repo: _expect_provider(repo, conversation_id, "unknown"))
+
+
+async def _expect_provider(repo, conversation_id, provider):
+    assert (await repo.get(conversation_id)).messages[1].provider == provider

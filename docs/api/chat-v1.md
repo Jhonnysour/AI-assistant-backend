@@ -67,13 +67,14 @@ Devuelve la conversación con su historial, en orden: cada mensaje del usuario s
   {"role": "user", "message_id": "…", "text": "Hola", "created_at": "…"},
   {"role": "assistant", "response_id": "…", "in_reply_to": "…", "text": "…", "status": "completed",
    "error": null, "model_requested": "gpt-6-luna", "model_reported": "gpt-6-luna",
-   "created_at": "…", "finished_at": "…"}
+   "provider": "chatgpt_plan", "created_at": "…", "finished_at": "…"}
 ]}
 ```
 
 - `status` es uno de los estados de la respuesta: `streaming`, `completed`, `failed`, `interrupted`
   o `cancelled`.
 - `error` es `{"code", "message"}` si la respuesta terminó con error; `retryable` no se guarda.
+- `provider` es `unknown` en respuestas guardadas antes de registrarlo.
 - Una respuesta en `streaming` muestra el texto del último punto de control (como mucho 1 s por
   detrás del stream).
 - `404 conversation_not_found` si no existe.
@@ -166,7 +167,7 @@ empiezan por `:` son de mantenimiento de la conexión y el cliente las ignora: e
 
 | Evento | `data` | Significado |
 | --- | --- | --- |
-| `message.accepted` | `{"message_id", "response_id", "created_at", "model_requested"}` | Primer evento. El mensaje del usuario está registrado. |
+| `message.accepted` | `{"message_id", "response_id", "created_at", "model_requested", "provider"}` | Primer evento. El mensaje del usuario está registrado. `provider` es el proveedor que genera la respuesta (`fake`, `chatgpt_plan`). |
 | `response.delta` | `{"response_id", "text"}` | Fragmento que se añade a la respuesta. |
 | `response.completed` | `{"response_id", "finished_at", "model_reported"}` | **Único evento que confirma una respuesta completa.** |
 | `response.failed` | `{"response_id", "status", "finished_at", "model_reported", "error": {"code", "message", "retryable"}}` | Fin con error. `status` vale `failed` (sin texto) o `interrupted` (con texto parcial). |
@@ -178,7 +179,7 @@ Ejemplo:
 
 ```
 event: message.accepted
-data: {"message_id":"9f…","response_id":"a1…","created_at":"2026-10-29T14:03:00Z","model_requested":"gpt-6-luna"}
+data: {"message_id":"9f…","response_id":"a1…","created_at":"2026-10-29T14:03:00Z","model_requested":"gpt-6-luna","provider":"chatgpt_plan"}
 
 event: response.delta
 data: {"response_id":"a1…","text":"Hola, "}
