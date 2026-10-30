@@ -63,7 +63,8 @@ no cambiar automáticamente a una API de pago. El desarrollo con un proveedor si
   backend; la parte visible de esos criterios se comprueba con desktop.
 - [x] Acordar el [modelo del chat](../domain/conversations.md) y alinear núcleo, contrato y pruebas
   (2026-10-29): núcleo asíncrono, cancelación explícita inmediata, fechas y modelos por respuesta.
-- [ ] Exponer el contrato con FastAPI (SSE) usando el proveedor simulado o el real según configuración.
+- [x] Exponer el contrato con FastAPI (SSE) usando el proveedor simulado o el real según configuración
+  (2026-10-29, FastAPI 0.162.0 y uvicorn 0.54.0; probado con el proveedor simulado).
 - [ ] Crear Electron + React con vista, ViewModel y cliente de API.
 - [ ] Integrar streaming simulado y comprobar estados visibles.
 - [ ] Añadir el proveedor validado y ejecutar AC-03.

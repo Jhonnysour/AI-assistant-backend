@@ -58,6 +58,27 @@ class ChatProvider(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class ModelOption:
+    id: str  # Slug que se envía como model.
+    display_name: str
+    access: Literal["verified", "unverified"]  # verified: una respuesta con él se completó.
+
+
+class CatalogUnavailable(Exception):
+    """El catálogo no se pudo obtener. code es uno de los códigos de error de arriba."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+class ModelCatalog(Protocol):
+    async def list_models(self) -> list[ModelOption]:
+        """Modelos ofrecidos, en el orden del proveedor. Lanza CatalogUnavailable."""
+        ...
+
+
 class ConversationRepository(Protocol):
     def add(self, conversation: Conversation) -> None: ...
 

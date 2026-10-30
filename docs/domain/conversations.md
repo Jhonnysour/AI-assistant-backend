@@ -232,8 +232,11 @@ Comportamiento implementado (núcleo asíncrono, R6 y R7):
 Pruebas que lo cubren: cancelar con el proveedor simulado bloqueado (`test_chat_use_case.py`) y con
 el adaptador real sobre un stream httpx detenido (`test_chatgpt_plan_provider.py`).
 
-**Sin verificar:** cómo cancela Starlette el flujo al desconectarse el cliente. Las pruebas simulan
-esa cancelación de la tarea; se comprobará con la capa HTTP.
+Con la capa HTTP también está comprobado sobre un servidor uvicorn real (`test_http_api.py`):
+cancelar con el proveedor detenido responde `204` en menos de 1 s y el stream recibe
+`response.cancelled`; cerrar la conexión sin cancelar deja la respuesta `interrupted` y cierra la
+conexión con el proveedor. uvicorn declara ASGI 2.3, así que Starlette detecta la desconexión en
+cuanto llega `http.disconnect`, sin esperar al siguiente envío.
 
 El comportamiento anterior (núcleo síncrono), medido el 2026-10-29, solo podía cancelar entre dos
 eventos: mientras se esperaba al proveedor, la conversación seguía bloqueada hasta el siguiente

@@ -86,3 +86,31 @@ class ChatGptPlanProvider:
             yield ports.ProviderFailed(*_ERROR_CODES.get(error.code, _from_status(error.status)))
         finally:
             await stream.aclose()
+
+
+class ChatGptPlanCatalog:
+    """Catálogo ofrecido por el proveedor, marcado con el acceso comprobado de este registro."""
+
+    def __init__(self, http: httpx.AsyncClient, session: ChatGptPlanSession,
+                 refresh_http: httpx.Client, model_log: ModelAccessLog) -> None:
+        self._http = http
+        self._session = session
+        self._refresh_http = refresh_http
+        self._model_log = model_log
+
+    async def list_models(self) -> list[ports.ModelOption]:
+        try:
+            record = await asyncio.to_thread(self._session.current, self._refresh_http)
+            catalog = await responses.alist_models(self._http, record.access_token)
+        except SessionUnavailable as error:
+            raise ports.CatalogUnavailable(ports.AUTH_REQUIRED) from error
+        except httpx.TransportError as error:
+            raise ports.CatalogUnavailable(ports.PROVIDER_UNAVAILABLE) from error
+        except responses.ProviderError as error:
+            code, _ = _ERROR_CODES.get(error.code, _from_status(error.status))
+            raise ports.CatalogUnavailable(code) from error
+        verified = self._model_log.verified(record.client_id)
+        return [
+            ports.ModelOption(m.slug, m.display_name, "verified" if m.slug in verified else "unverified")
+            for m in catalog
+        ]

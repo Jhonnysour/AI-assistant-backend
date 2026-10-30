@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ai_assistant.infrastructure.secret_store import ProtectedFile
+from ai_assistant.infrastructure.secret_store import ProtectedFile, default_protector
 
 PLAN_USAGE_SCOPE = "chatgpt.tokens.use.direct"
 CREDENTIALS_ENTROPY = b"ai-assistant/chatgpt-plan/credentials/v1"
@@ -72,21 +72,42 @@ class ModelAccessLog:
     """Modelos con acceso comprobado (response.completed), por client_id emitido.
 
     El catálogo indica qué se ofrece; solo esta lista indica qué se ha comprobado.
-    No contiene secretos.
+    No contiene secretos. Se lee del disco en cada uso porque la CLI de prueba y el servidor
+    pueden escribirla.
     """
 
     path: Path
-    _data: dict[str, dict[str, str]] = field(default_factory=dict, init=False)
 
-    def __post_init__(self) -> None:
-        if self.path.exists():
-            self._data = json.loads(self.path.read_text(encoding="utf-8"))
+    def _load(self) -> dict[str, dict[str, str]]:
+        if not self.path.exists():
+            return {}
+        return json.loads(self.path.read_text(encoding="utf-8"))
 
     def verified(self, client_id: str) -> dict[str, str]:
-        return dict(self._data.get(client_id, {}))
+        return dict(self._load().get(client_id, {}))
 
     def record_completed(self, client_id: str, model: str) -> None:
-        stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        self._data.setdefault(client_id, {})[model] = stamp
+        data = self._load()
+        data.setdefault(client_id, {})[model] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
+        self.path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+@dataclass(frozen=True)
+class LocalState:
+    """Rutas del estado local del adaptador dentro de AI_ASSISTANT_DATA_DIR."""
+
+    host_id_path: Path
+    credentials: CredentialStore
+    model_log: ModelAccessLog
+
+    @classmethod
+    def open(cls, data_dir: Path) -> LocalState:
+        base = data_dir / "chatgpt-plan"
+        return cls(
+            host_id_path=data_dir / "host-id",
+            credentials=CredentialStore(
+                ProtectedFile(base / "credentials.dpapi", default_protector(CREDENTIALS_ENTROPY))
+            ),
+            model_log=ModelAccessLog(base / "verified-models.json"),
+        )

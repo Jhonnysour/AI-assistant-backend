@@ -2,8 +2,9 @@
 
 Backend propuesto en Python y FastAPI, con arquitectura hexagonal y PostgreSQL.
 Estado: la prueba de viabilidad del proveedor se superó el 2026-10-29. El núcleo de chat ya existe
-(dominio, caso de uso asíncrono, proveedor simulado y proveedor real), y el modelo del chat y el
-contrato SSE están acordados. Todavía no hay API HTTP (FastAPI) ni base de datos.
+(dominio, caso de uso asíncrono, proveedor simulado y proveedor real), el modelo del chat y el
+contrato SSE están acordados y la API HTTP (FastAPI) los expone en local. No hay base de datos ni
+despliegue.
 
 ## Lectura inicial
 

@@ -91,6 +91,13 @@ def list_models(http: httpx.Client, access_token: str) -> list[CatalogModel]:
     return parse_catalog(response.json())
 
 
+async def alist_models(http: httpx.AsyncClient, access_token: str) -> list[CatalogModel]:
+    response = await http.get(f"{API_BASE}/models", headers=_auth_headers(access_token))
+    if response.status_code != 200:
+        raise _provider_error(response)
+    return parse_catalog(response.json())
+
+
 class SseDecoder:
     """Agrupa líneas Server-Sent Events en (event, data), línea a línea."""
 

@@ -2,8 +2,10 @@
 
 Estado: **acordado** el 2026-10-29 para [SPEC-001](../specs/001-chat-texto.md), junto con el
 [modelo del chat](../domain/conversations.md). El usuario decidió SSE y revisó el resto, que propuso el
-agente. El núcleo (dominio, caso de uso y proveedores) ya cumple este contrato. **La capa HTTP
-(FastAPI) aún no existe**: corresponde al siguiente incremento. Los cambios incompatibles requieren `/v2`.
+agente. Implementado con FastAPI en
+[adapters/inbound/http.py](../../src/ai_assistant/conversations/adapters/inbound/http.py); cómo
+arrancarlo, en [desarrollo](../development.md#servidor-http-contrato-chat-v1). Los cambios
+incompatibles requieren `/v2`.
 
 ## Decisiones
 
@@ -24,6 +26,7 @@ agente. El núcleo (dominio, caso de uso y proveedores) ya cumple este contrato.
 - Las fechas son UTC en ISO 8601 con `Z` (`2026-10-29T14:03:00Z`), asignadas por el backend.
 - Los errores fuera del stream responden con `{"error": {"code": "...", "message": "..."}}`. El
   `message` está en español, se puede mostrar al usuario y no contiene detalles técnicos ni secretos.
+  Un fallo inesperado en cualquier endpoint responde `500` con `internal_error`.
 
 ## Endpoints
 
@@ -91,7 +94,9 @@ Cancela una respuesta en curso. Sin cuerpo.
 ## Eventos SSE
 
 Formato: `event: <nombre>` y `data: <json>`, seguidos de una línea en blanco. Las líneas que
-empiezan por `:` son de mantenimiento de la conexión y el cliente las ignora.
+empiezan por `:` son de mantenimiento de la conexión y el cliente las ignora: el backend envía
+`: ping` tras 15 s sin eventos (por ejemplo, mientras espera al proveedor). La respuesta lleva
+`Cache-Control: no-cache` y `X-Accel-Buffering: no`.
 
 | Evento | `data` | Significado |
 | --- | --- | --- |

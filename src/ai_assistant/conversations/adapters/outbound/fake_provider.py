@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator, Sequence
 
 from ai_assistant.conversations.application.ports import (
+    ModelOption,
     ProviderCompleted,
     ProviderEvent,
     ProviderMessage,
@@ -50,3 +51,12 @@ class FakeChatProvider:
                     yield item
         finally:
             self.closed_streams += 1
+
+
+class FakeModelCatalog:
+    """Catálogo del proveedor simulado: un único modelo, siempre disponible."""
+
+    MODEL = ModelOption("fake-model", "Modelo simulado", "verified")
+
+    async def list_models(self) -> list[ModelOption]:
+        return [self.MODEL]

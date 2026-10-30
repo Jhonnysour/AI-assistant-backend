@@ -5,12 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ai-assistant-backend"
 version = "0.0.1"
-description = "Backend del asistente personal (prueba de viabilidad del proveedor)."
+description = "Backend del asistente personal."
 requires-python = ">=3.12"
 # Versiones consultadas en PyPI el 2026-10-29.
 dependencies = [
+    "fastapi==0.162.0",
     "httpx==0.28.1",
     "PyJWT[crypto]==2.15.1",
+    "uvicorn==0.54.0",
 ]
 
 [project.optional-dependencies]
@@ -23,3 +25,5 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Starlette 1.10 recomienda httpx2 para su TestClient; httpx 0.28 sigue funcionando.
+filterwarnings = ["ignore:Using `httpx` with `starlette.testclient` is deprecated"]

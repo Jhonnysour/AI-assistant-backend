@@ -161,3 +161,40 @@ def test_cancel_while_waiting_for_provider_closes_http_stream():
             assert (reply.status, reply.text) == (ResponseStatus.CANCELLED, "parcial")
 
     asyncio.run(scenario())
+
+
+def run_catalog(handler, tmp_path, session=None):
+    from ai_assistant.conversations.adapters.outbound.chatgpt_plan.provider import ChatGptPlanCatalog
+
+    log = ModelAccessLog(tmp_path / "verified-models.json")
+    log.record_completed("oaiapp_x", "gpt-6-luna")
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            return await ChatGptPlanCatalog(http, session or FakeSession(), None, log).list_models()
+    return asyncio.run(go())
+
+
+def test_catalog_marks_verified_models(tmp_path):
+    payload = {"models": [
+        {"slug": "gpt-6-luna", "display_name": "GPT-6-Luna", "visibility": "list"},
+        {"slug": "gpt-6-sol", "display_name": "GPT-6-Sol", "visibility": "list"},
+        {"slug": "hidden", "display_name": "Oculto", "visibility": "hide"},
+    ]}
+    assert run_catalog(lambda r: httpx.Response(200, json=payload), tmp_path) == [
+        ports.ModelOption("gpt-6-luna", "GPT-6-Luna", "verified"),
+        ports.ModelOption("gpt-6-sol", "GPT-6-Sol", "unverified"),
+    ]
+
+
+@pytest.mark.parametrize("handler,session,code", [
+    (lambda r: httpx.Response(403, json={"error": {"code": "subscription_sharing_user_not_eligible"}}),
+     None, ports.NOT_ELIGIBLE),
+    (lambda r: httpx.Response(429, json={}), None, ports.USAGE_LIMIT),
+    (lambda r: (_ for _ in ()).throw(httpx.ConnectError("proxy")), None, ports.PROVIDER_UNAVAILABLE),
+    (lambda r: httpx.Response(500), FakeSession(SessionUnavailable("no_session", "x")), ports.AUTH_REQUIRED),
+])
+def test_catalog_errors_are_translated(tmp_path, handler, session, code):
+    with pytest.raises(ports.CatalogUnavailable) as error:
+        run_catalog(handler, tmp_path, session)
+    assert error.value.code == code

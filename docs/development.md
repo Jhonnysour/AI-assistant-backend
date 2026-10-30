@@ -1,7 +1,7 @@
 # Desarrollo local
 
-Estado: verificado en Windows 11 el 2026-10-29 para la prueba de viabilidad del proveedor
-([SPEC-001](specs/001-chat-texto.md)). Todavía no hay API HTTP ni despliegue.
+Estado: verificado en Windows 11 el 2026-10-29 para la prueba de viabilidad del proveedor y el
+servidor HTTP con el proveedor simulado ([SPEC-001](specs/001-chat-texto.md)). No hay despliegue.
 
 ## Requisitos
 
@@ -26,6 +26,8 @@ httpx con `trust_env=False` y rutas explícitas. El dominio no conoce estos ajus
 | `AI_ASSISTANT_BROWSER` | opcional | Comando para abrir el perfil de Chrome correcto (ver abajo). |
 | `AI_ASSISTANT_DATA_DIR` | opcional | Datos locales; por defecto `%LOCALAPPDATA%\ai-assistant`. |
 | `AI_ASSISTANT_OAUTH_PORT` | opcional | Puerto del callback; por defecto `1455`. |
+| `AI_ASSISTANT_PROVIDER` | `fake` (por defecto) o `chatgpt_plan` | Proveedor del servidor HTTP. `fake` no consume el plan. |
+| `AI_ASSISTANT_API_PORT` | opcional | Puerto del servidor HTTP; por defecto `8000`. |
 
 El callback OAuth (`http://127.0.0.1:1455/auth/callback`) es una conexión **entrante** a un servidor
 local de un solo uso: no pasa por el proxy del backend. En Chrome, las direcciones loopback se omiten
@@ -65,8 +67,9 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-Usan transportes simulados de httpx, una clave RSA generada para firmar ID tokens de prueba y un
-listener loopback efímero. Pasan también con el proxy apuntando a un puerto inexistente.
+Usan transportes simulados de httpx, una clave RSA generada para firmar ID tokens de prueba, un
+listener loopback efímero y un servidor uvicorn en un puerto local libre (cancelación y desconexión
+reales a mitad del stream). Pasan también con el proxy apuntando a un puerto inexistente.
 Las pruebas de DPAPI y de la CLI se omiten fuera de Windows.
 
 ## Prueba real con la cuenta (manual)
@@ -119,6 +122,46 @@ Códigos de salida: `0` correcto, `1` fallo del proveedor o respuesta incompleta
 
 Registrar el resultado en [docs/evidence](evidence/001-viabilidad-proveedor.md) sin tokens, URLs de
 autorización, correo ni identificadores de cuenta.
+
+## Servidor HTTP (contrato chat-v1)
+
+Implementa [chat-v1](api/chat-v1.md). Escucha **solo en `127.0.0.1`**: la API no tiene autenticación
+y el host no es configurable a propósito. Si se actualiza desde una versión anterior, repetir el
+`pip install` de la instalación (añade FastAPI y uvicorn).
+
+Con el proveedor simulado (por defecto; no usa red ni el plan):
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_assistant.server
+```
+
+Con el proveedor real: requiere `login` previo con la CLI de la prueba y las variables de proxy en
+esa misma terminal. Cada mensaje consume el plan.
+
+```powershell
+$env:HTTP_PROXY  = 'http://127.0.0.1:17890'
+$env:HTTPS_PROXY = 'http://127.0.0.1:17890'
+$env:NO_PROXY    = 'localhost,127.0.0.1,::1'
+$env:AI_ASSISTANT_PROVIDER = 'chatgpt_plan'
+.\.venv\Scripts\python.exe -m ai_assistant.server
+```
+
+Se detiene con Ctrl+C. Las conversaciones se pierden al detenerlo.
+
+Probarlo desde otra terminal de PowerShell (`curl.exe`, no el alias `curl`; `--noproxy "*"` evita que
+la petición local pase por el proxy):
+
+```powershell
+curl.exe -s --noproxy "*" http://127.0.0.1:8000/v1/models
+$conv = (curl.exe -s --noproxy "*" -X POST http://127.0.0.1:8000/v1/conversations | ConvertFrom-Json).conversation_id
+'{"model":"fake-model","text":"Hola"}' | curl.exe -s -N --noproxy "*" -X POST -H "Content-Type: application/json" --data-binary "@-" "http://127.0.0.1:8000/v1/conversations/$conv/messages"
+```
+
+Con el proveedor real, usar un slug de `/v1/models` (p. ej. `gpt-6-luna`) en lugar de `fake-model`.
+La documentación interactiva de FastAPI queda en `http://127.0.0.1:8000/docs`.
+
+El log de uvicorn registra método, ruta y código de cada petición (identificadores de conversación,
+nunca el texto). Los fallos internos registran solo el tipo de error y las líneas de código.
 
 ## Datos locales y credenciales
 

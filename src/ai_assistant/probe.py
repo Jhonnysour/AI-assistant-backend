@@ -19,10 +19,8 @@ import time
 from ai_assistant.config import Settings, load_settings
 from ai_assistant.conversations.adapters.outbound.chatgpt_plan import oauth, responses
 from ai_assistant.conversations.adapters.outbound.chatgpt_plan.credentials import (
-    CREDENTIALS_ENTROPY,
     CredentialRecord,
-    CredentialStore,
-    ModelAccessLog,
+    LocalState,
     load_or_create_host_id,
 )
 from ai_assistant.conversations.adapters.outbound.chatgpt_plan.session import (
@@ -30,12 +28,7 @@ from ai_assistant.conversations.adapters.outbound.chatgpt_plan.session import (
     SessionUnavailable,
 )
 from ai_assistant.infrastructure.http import build_async_http_client, build_http_client, redact_url
-from ai_assistant.infrastructure.secret_store import (
-    ProtectedFile,
-    SecretStoreCorrupted,
-    SecretStoreUnavailable,
-    default_protector,
-)
+from ai_assistant.infrastructure.secret_store import SecretStoreCorrupted, SecretStoreUnavailable
 
 EXIT_OK, EXIT_PROVIDER, EXIT_ACTION_NEEDED, EXIT_CANCELLED = 0, 1, 2, 130
 
@@ -59,12 +52,10 @@ ERROR_EXPLANATIONS = {
 class Context:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        base = settings.data_dir / "chatgpt-plan"
-        self.host_id_path = settings.data_dir / "host-id"
-        self.credentials = CredentialStore(
-            ProtectedFile(base / "credentials.dpapi", default_protector(CREDENTIALS_ENTROPY))
-        )
-        self.model_log = ModelAccessLog(base / "verified-models.json")
+        state = LocalState.open(settings.data_dir)
+        self.host_id_path = state.host_id_path
+        self.credentials = state.credentials
+        self.model_log = state.model_log
 
     def http(self):
         return build_http_client(self.settings)

@@ -55,12 +55,14 @@ No hace falta una base de datos hasta implementar persistencia; la sesión inici
 ```
 src/ai_assistant/
   config.py                          # composición: lectura del entorno
+  server.py                          # composición del servidor HTTP: elige proveedor, uvicorn en 127.0.0.1
   infrastructure/http.py             # clientes httpx (síncrono y asíncrono) con proxy explícito
   infrastructure/secret_store.py     # archivo cifrado (DPAPI en Windows)
   conversations/
     domain/model.py                  # Conversation, UserMessage, AssistantResponse, estados y reglas
     application/ports.py             # ChatProvider (async), ConversationRepository, eventos del proveedor
     application/chat.py              # ChatService/Turn: enviar, flujo de eventos y cancelación
+    adapters/inbound/http.py         # FastAPI: endpoints chat-v1, SSE y formato de error
     adapters/outbound/
       in_memory_repository.py        # sesión temporal
       fake_provider.py               # proveedor simulado (pruebas y desarrollo de clientes)
@@ -81,7 +83,10 @@ src/ai_assistant/
   flujo OAuth síncrono de la CLI en un hilo aparte (`asyncio.to_thread`).
 - Los fallos propios del backend se registran con `logging` (solo tipo y líneas de código, sin
   mensajes, tokens ni texto del usuario) y se comunican como `internal_error`.
-- Falta el adaptador de entrada HTTP (FastAPI) y su raíz de composición.
+- El adaptador HTTP usa el SSE propio de FastAPI (`EventSourceResponse`). El envío se reserva en una
+  dependencia, de modo que `400`/`404`/`409` son respuestas HTTP normales, y esa dependencia cierra
+  el turno al terminar la petición para no dejar la conversación bloqueada. El proveedor por defecto
+  es el simulado; `AI_ASSISTANT_PROVIDER=chatgpt_plan` activa el real.
 
 ## Evolución
 
