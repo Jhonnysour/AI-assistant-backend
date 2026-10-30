@@ -14,8 +14,8 @@ servidor HTTP con el proveedor simulado ([SPEC-001](specs/001-chat-texto.md)). N
 Desde este equipo, la conexión directa a `auth.openai.com` respondió 403 y la conexión a través
 del proxy respondió 200 (2026-10-29). Por eso las llamadas salientes al proveedor usan el proxy.
 
-El backend **no confía** en que el cliente HTTP herede el entorno: [config.py](../src/ai_assistant/config.py)
-lee las variables y [infrastructure/http.py](../src/ai_assistant/infrastructure/http.py) crea un cliente
+El backend **no confía** en que el cliente HTTP herede el entorno: [config.py](../src/ai_assistant/infrastructure/config.py)
+lee las variables y [infrastructure/http_client.py](../src/ai_assistant/infrastructure/http_client.py) crea un cliente
 httpx con `trust_env=False` y rutas explícitas. El dominio no conoce estos ajustes.
 
 | Variable | Valor en desarrollo | Uso |
@@ -100,10 +100,10 @@ el código de autorización. Revisar el apartado de proxy y repetir `login`.
 ### 2. Ejecutar
 
 ```powershell
-.\.venv\Scripts\python.exe -m ai_assistant.probe login
-.\.venv\Scripts\python.exe -m ai_assistant.probe status
-.\.venv\Scripts\python.exe -m ai_assistant.probe models
-.\.venv\Scripts\python.exe -m ai_assistant.probe ask --model gpt-6-luna "Responde exactamente: Hola, mundo"
+.\.venv\Scripts\python.exe -m ai_assistant.infrastructure.tools.probe login
+.\.venv\Scripts\python.exe -m ai_assistant.infrastructure.tools.probe status
+.\.venv\Scripts\python.exe -m ai_assistant.infrastructure.tools.probe models
+.\.venv\Scripts\python.exe -m ai_assistant.infrastructure.tools.probe ask --model gpt-6-luna "Responde exactamente: Hola, mundo"
 ```
 
 `--model` recibe el **slug**, que es la primera columna de `models` (p. ej. `gpt-6-luna`), y no el
@@ -132,7 +132,7 @@ y el host no es configurable a propósito. Si se actualiza desde una versión an
 Con el proveedor simulado (por defecto; no usa red ni el plan):
 
 ```powershell
-.\.venv\Scripts\python.exe -m ai_assistant.server
+.\.venv\Scripts\python.exe -m ai_assistant.infrastructure.bootstrap.server
 ```
 
 Con el proveedor real: requiere `login` previo con la CLI de la prueba y las variables de proxy en
@@ -143,7 +143,7 @@ $env:HTTP_PROXY  = 'http://127.0.0.1:17890'
 $env:HTTPS_PROXY = 'http://127.0.0.1:17890'
 $env:NO_PROXY    = 'localhost,127.0.0.1,::1'
 $env:AI_ASSISTANT_PROVIDER = 'chatgpt_plan'
-.\.venv\Scripts\python.exe -m ai_assistant.server
+.\.venv\Scripts\python.exe -m ai_assistant.infrastructure.bootstrap.server
 ```
 
 Se detiene con Ctrl+C. Las conversaciones se pierden al detenerlo.

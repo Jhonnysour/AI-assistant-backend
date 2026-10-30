@@ -1,1 +1,1 @@
-"""Infraestructura compartida por los adaptadores (red, almacenamiento protegido)."""
+"""Capa de infraestructura: adaptadores, configuración, soporte técnico y composición."""

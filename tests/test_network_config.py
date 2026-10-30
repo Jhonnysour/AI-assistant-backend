@@ -2,8 +2,8 @@ from pathlib import Path
 
 import httpx
 
-from ai_assistant.config import load_settings
-from ai_assistant.infrastructure.http import build_http_client, proxy_routes, redact_url
+from ai_assistant.infrastructure.config import load_settings
+from ai_assistant.infrastructure.http_client import build_http_client, proxy_routes, redact_url
 
 PROXY = "http://127.0.0.1:17890"
 ENV = {

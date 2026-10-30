@@ -6,13 +6,12 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from ai_assistant.conversations.adapters.outbound.fake_provider import FakeChatProvider
-from ai_assistant.conversations.adapters.outbound.in_memory_repository import (
+from ai_assistant.infrastructure.adapters.outbound.llm.fake import FakeChatProvider
+from ai_assistant.infrastructure.adapters.outbound.persistence.in_memory import (
     InMemoryConversationRepository,
 )
-from ai_assistant.conversations.application import ports
-from ai_assistant.conversations.application.chat import (
-    ChatService,
+from ai_assistant.application import error_codes as codes
+from ai_assistant.application.ports.inbound.conversations import (
     ConversationNotFound,
     InvalidRequest,
     MessageAccepted,
@@ -21,7 +20,9 @@ from ai_assistant.conversations.application.chat import (
     ResponseDelta,
     ResponseFailed,
 )
-from ai_assistant.conversations.domain.model import (
+from ai_assistant.application.ports.outbound.chat_provider import ProviderCompleted, ProviderFailed, TextChunk
+from ai_assistant.application.use_cases.conversations.chat import ChatService
+from ai_assistant.domain.conversations.model import (
     AssistantResponse,
     EmptyMessage,
     ResponseNotActive,
@@ -47,8 +48,9 @@ class StepClock:
 
 def setup(script=None):
     provider = FakeChatProvider(script)
-    service = ChatService(InMemoryConversationRepository(), provider, clock=StepClock())
-    conversation = service.start_conversation()
+    repository = InMemoryConversationRepository()
+    service = ChatService(repository, provider, clock=StepClock())
+    conversation = repository.get(service.start_conversation().conversation_id)
     return service, provider, conversation
 
 
@@ -88,8 +90,8 @@ def test_missing_model_or_conversation_is_rejected():
 
 
 def test_ac02_chunks_then_completed_with_dates_and_models():
-    service, provider, conversation = setup([ports.TextChunk("Hola, "), ports.TextChunk("mundo"),
-                                             ports.ProviderCompleted("gpt-6-luna-reported")])
+    service, provider, conversation = setup([TextChunk("Hola, "), TextChunk("mundo"),
+                                             ProviderCompleted("gpt-6-luna-reported")])
     turn = service.send(conversation.id, "gpt-6-luna", "Saluda")
     events = asyncio.run(collect(turn))
     reply = reply_of(conversation)
@@ -118,15 +120,15 @@ def test_turn_is_explicit_and_user_text_is_kept_as_sent():
 
 
 def test_ac04_provider_unavailable_ends_with_recoverable_error():
-    service, provider, conversation = setup([ports.ProviderFailed(ports.PROVIDER_UNAVAILABLE, True)])
+    service, provider, conversation = setup([ProviderFailed(codes.PROVIDER_UNAVAILABLE, True)])
     events = run_turn(service, conversation.id, "hola")
     reply = reply_of(conversation)
     assert events[-1] == ResponseFailed(
-        reply.id, "failed", ports.PROVIDER_UNAVAILABLE,
+        reply.id, "failed", codes.PROVIDER_UNAVAILABLE,
         "No se pudo contactar con el proveedor. Puedes reintentar.", True, reply.finished_at, None,
     )
     assert conversation.messages[0].text == "hola"  # Se conserva el texto del usuario.
-    assert reply.status is ResponseStatus.FAILED and reply.error_code == ports.PROVIDER_UNAVAILABLE
+    assert reply.status is ResponseStatus.FAILED and reply.error_code == codes.PROVIDER_UNAVAILABLE
     assert conversation.active_response_id is None
 
 
@@ -135,34 +137,34 @@ def test_unexpected_exception_is_internal_error_and_logged_without_details(caplo
     with caplog.at_level(logging.ERROR):
         events = run_turn(service, conversation.id, "texto-del-usuario")
     assert (events[-1].code, events[-1].message, events[-1].retryable) == (
-        ports.INTERNAL_ERROR, "Error interno del asistente.", False)
+        codes.INTERNAL_ERROR, "Error interno del asistente.", False)
     assert "ConnectionError" in caplog.text
     assert "detalle-secreto" not in caplog.text and "texto-del-usuario" not in caplog.text
     assert reply_of(conversation).status is ResponseStatus.FAILED
 
 
 def test_ac05_cut_mid_response_keeps_partial_and_is_not_complete():
-    service, provider, conversation = setup([ports.TextChunk("medio ")])  # Sin evento final.
+    service, provider, conversation = setup([TextChunk("medio ")])  # Sin evento final.
     events = run_turn(service, conversation.id, "hola")
-    assert (events[-1].status, events[-1].code, events[-1].retryable) == ("interrupted", ports.INTERRUPTED, True)
+    assert (events[-1].status, events[-1].code, events[-1].retryable) == ("interrupted", codes.INTERRUPTED, True)
     assert not any(isinstance(e, ResponseCompleted) for e in events)
     assert reply_of(conversation).text == "medio "
     assert reply_of(conversation).status is ResponseStatus.INTERRUPTED
 
 
 def test_provider_failure_after_text_is_interrupted_with_provider_code_and_model():
-    service, provider, conversation = setup([ports.TextChunk("a"),
-                                             ports.ProviderFailed(ports.USAGE_LIMIT, False, "m-reported")])
+    service, provider, conversation = setup([TextChunk("a"),
+                                             ProviderFailed(codes.USAGE_LIMIT, False, "m-reported")])
     events = run_turn(service, conversation.id, "hola")
-    assert (events[-1].status, events[-1].code, events[-1].retryable) == ("interrupted", ports.USAGE_LIMIT, False)
+    assert (events[-1].status, events[-1].code, events[-1].retryable) == ("interrupted", codes.USAGE_LIMIT, False)
     assert events[-1].model_reported == reply_of(conversation).model_reported == "m-reported"
 
 
 def test_ac06_cancel_while_provider_is_waiting_is_immediate():
     async def scenario():
         gate = asyncio.Event()  # El proveedor no envía nada hasta que se active.
-        service, provider, conversation = setup([ports.TextChunk("parcial"), gate,
-                                                 ports.TextChunk(" tardío"), ports.ProviderCompleted()])
+        service, provider, conversation = setup([TextChunk("parcial"), gate,
+                                                 TextChunk(" tardío"), ProviderCompleted()])
         turn = service.send(conversation.id, "model", "hola")
         events = turn.events()
         assert isinstance(await anext(events), MessageAccepted)
@@ -216,13 +218,13 @@ def test_cancel_rejects_unknown_or_finished_responses():
 
 
 @pytest.mark.parametrize("chunks,status", [
-    ([ports.TextChunk("parcial")], ResponseStatus.INTERRUPTED),
+    ([TextChunk("parcial")], ResponseStatus.INTERRUPTED),
     ([], ResponseStatus.FAILED),
 ])
 def test_client_disconnect_without_cancel_is_interrupted(chunks, status):
     async def scenario():
         gate = asyncio.Event()
-        service, provider, conversation = setup([*chunks, gate, ports.ProviderCompleted()])
+        service, provider, conversation = setup([*chunks, gate, ProviderCompleted()])
         turn = service.send(conversation.id, "model", "hola")
         events = turn.events()
         await anext(events)
@@ -236,7 +238,7 @@ def test_client_disconnect_without_cancel_is_interrupted(chunks, status):
         await events.aclose()
         await settle()
         reply = reply_of(conversation)
-        assert (reply.status, reply.error_code) == (status, ports.INTERRUPTED)
+        assert (reply.status, reply.error_code) == (status, codes.INTERRUPTED)
         assert conversation.active_response_id is None
         assert provider.closed_streams == 1
 
@@ -257,7 +259,7 @@ def test_ac07_second_send_while_active_is_rejected():
 def test_history_includes_only_completed_exchanges():
     service, provider, conversation = setup()
     run_turn(service, conversation.id, "primera")
-    provider.script = [ports.TextChunk("roto")]  # Esta respuesta queda interrumpida.
+    provider.script = [TextChunk("roto")]  # Esta respuesta queda interrumpida.
     run_turn(service, conversation.id, "segunda")
     provider.script = None
     run_turn(service, conversation.id, "tercera")
@@ -270,7 +272,7 @@ def test_history_includes_only_completed_exchanges():
 
 
 def test_manual_retry_is_a_new_turn_and_there_is_no_automatic_retry():
-    service, provider, conversation = setup([ports.TextChunk("a"), ports.ProviderFailed(ports.INTERRUPTED, True)])
+    service, provider, conversation = setup([TextChunk("a"), ProviderFailed(codes.INTERRUPTED, True)])
     run_turn(service, conversation.id, "hola")
     assert len(provider.calls) == 1
     provider.script = None

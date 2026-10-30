@@ -12,24 +12,25 @@ import pytest
 import uvicorn
 from fastapi.testclient import TestClient
 
-from ai_assistant.config import load_settings
-from ai_assistant.conversations.adapters.outbound.chatgpt_plan.responses import parse_sse
-from ai_assistant.conversations.adapters.outbound.fake_provider import FakeChatProvider, FakeModelCatalog
-from ai_assistant.conversations.adapters.outbound.in_memory_repository import (
+from ai_assistant.infrastructure.config import load_settings
+from ai_assistant.infrastructure.adapters.outbound.llm.chatgpt_plan.responses import parse_sse
+from ai_assistant.infrastructure.adapters.outbound.llm.fake import FakeChatProvider, FakeModelCatalog
+from ai_assistant.infrastructure.adapters.outbound.persistence.in_memory import (
     InMemoryConversationRepository,
 )
-from ai_assistant.conversations.application import ports
-from ai_assistant.conversations.application.chat import ChatService
-from ai_assistant.conversations.domain.model import ResponseStatus
-from ai_assistant.server import app_from_settings, create_app
+from ai_assistant.application import error_codes as codes
+from ai_assistant.application.ports.outbound.chat_provider import ProviderCompleted, ProviderFailed, TextChunk
+from ai_assistant.application.ports.outbound.model_catalog import CatalogUnavailable
+from ai_assistant.domain.conversations.model import ResponseStatus
+from ai_assistant.infrastructure.bootstrap.server import app_from_settings, build_use_cases, create_app
 
 
 class Backend:
     def __init__(self, script=None, catalog=None):
         self.provider = FakeChatProvider(script)
         self.repository = InMemoryConversationRepository()
-        self.chat = ChatService(self.repository, self.provider)
-        self.app = create_app(self.chat, catalog or FakeModelCatalog())
+        self.use_cases = build_use_cases(self.repository, self.provider, catalog or FakeModelCatalog())
+        self.app = create_app(self.use_cases)
 
     def reply(self, conversation_id):
         return self.repository.get(conversation_id).messages[-1]
@@ -77,13 +78,13 @@ def test_models_from_catalog(client):
 
 
 @pytest.mark.parametrize("code,status", [
-    (ports.AUTH_REQUIRED, 401), (ports.NOT_ELIGIBLE, 403), (ports.USAGE_LIMIT, 503),
-    (ports.PROVIDER_UNAVAILABLE, 503), (ports.PROVIDER_ERROR, 502), (ports.INTERNAL_ERROR, 500),
+    (codes.AUTH_REQUIRED, 401), (codes.NOT_ELIGIBLE, 403), (codes.USAGE_LIMIT, 503),
+    (codes.PROVIDER_UNAVAILABLE, 503), (codes.PROVIDER_ERROR, 502), (codes.INTERNAL_ERROR, 500),
 ])
 def test_models_errors_follow_contract(code, status):
     class FailingCatalog:
         async def list_models(self):
-            raise ports.CatalogUnavailable(code)
+            raise CatalogUnavailable(code)
 
     with TestClient(Backend(catalog=FailingCatalog()).app) as client:
         response = client.get("/v1/models")
@@ -106,7 +107,7 @@ def test_send_streams_events_until_completed(backend, client):
 
 
 def test_provider_failure_is_a_failed_event(client, backend):
-    backend.provider.script = [ports.TextChunk("a"), ports.ProviderFailed(ports.USAGE_LIMIT, False)]
+    backend.provider.script = [TextChunk("a"), ProviderFailed(codes.USAGE_LIMIT, False)]
     name, data = send(client, new_conversation(client))[-1]
     assert name == "response.failed"
     assert data["status"] == "interrupted"
@@ -135,14 +136,14 @@ def test_unknown_conversation_is_404(client):
 
 def test_second_send_while_active_is_409(client, backend):
     conversation_id = new_conversation(client)
-    backend.chat.send(conversation_id, "m", "uno")  # Envío aceptado y aún en curso.
+    backend.use_cases.send.send(conversation_id, "m", "uno")  # Envío aceptado y aún en curso.
     response = client.post(f"/v1/conversations/{conversation_id}/messages", json={"model": "m", "text": "dos"})
     assert (response.status_code, response.json()["error"]["code"]) == (409, "send_in_progress")
 
 
 def test_cancel_endpoint(client, backend):
     conversation_id = new_conversation(client)
-    turn = backend.chat.send(conversation_id, "m", "hola")
+    turn = backend.use_cases.send.send(conversation_id, "m", "hola")
     url = f"/v1/conversations/{conversation_id}/responses/{turn.response_id}/cancel"
     assert client.post(url).status_code == 204
     assert backend.reply(conversation_id).status is ResponseStatus.CANCELLED
@@ -211,7 +212,7 @@ def wait_for(condition, timeout=2.0):
 
 def stalled_backend():
     # El proveedor envía un fragmento y se queda esperando indefinidamente.
-    return Backend([ports.TextChunk("parcial"), asyncio.Event(), ports.ProviderCompleted()])
+    return Backend([TextChunk("parcial"), asyncio.Event(), ProviderCompleted()])
 
 
 def test_server_cancel_while_provider_is_waiting():

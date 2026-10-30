@@ -3,7 +3,7 @@
 Estado: **acordado** el 2026-10-29 para [SPEC-001](../specs/001-chat-texto.md), junto con el
 [modelo del chat](../domain/conversations.md). El usuario decidió SSE y revisó el resto, que propuso el
 agente. Implementado con FastAPI en
-[adapters/inbound/http.py](../../src/ai_assistant/conversations/adapters/inbound/http.py); cómo
+[adapters/inbound/http/chat_v1.py](../../src/ai_assistant/infrastructure/adapters/inbound/http/chat_v1.py); cómo
 arrancarlo, en [desarrollo](../development.md#servidor-http-contrato-chat-v1). Los cambios
 incompatibles requieren `/v2`.
 
@@ -164,7 +164,7 @@ Son independientes de OpenAI; el adaptador traduce los códigos propios del prov
 | `provider_error` | no | El proveedor devolvió un error. |
 | `internal_error` | no | Error interno del asistente. |
 
-Los mensajes viven en [chat.py](../../src/ai_assistant/conversations/application/chat.py).
+Los mensajes viven en [messages.py](../../src/ai_assistant/application/use_cases/conversations/messages.py).
 
 ## Contexto enviado al proveedor
 

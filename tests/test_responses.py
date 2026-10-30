@@ -4,8 +4,8 @@ import json
 import httpx
 import pytest
 
-from ai_assistant.conversations.adapters.outbound.chatgpt_plan import responses
-from ai_assistant.conversations.adapters.outbound.chatgpt_plan.responses import (
+from ai_assistant.infrastructure.adapters.outbound.llm.chatgpt_plan import responses
+from ai_assistant.infrastructure.adapters.outbound.llm.chatgpt_plan.responses import (
     StreamOutcome,
     TextDelta,
 )

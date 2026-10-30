@@ -2,7 +2,8 @@
 
 Estado: **acordado** el 2026-10-29. El usuario revisó la propuesta del agente (decisiones R1–R12 y
 bloques B y C, al final) y el código, el contrato [chat-v1](../api/chat-v1.md) y las pruebas están
-alineados con este documento. Implementación en `src/ai_assistant/conversations/`.
+alineados con este documento. Implementación en `src/ai_assistant/domain/conversations/` (entidades y
+reglas) y `src/ai_assistant/application/` (casos de uso y puertos).
 
 Fuentes: [SPEC-001](../specs/001-chat-texto.md), [arquitectura](../architecture.md),
 [visión](../product/vision.md).
@@ -88,11 +89,12 @@ expone en ISO 8601 con `Z`.
 
 ### Fuera de la conversación
 
-- **Opción de modelo** (para el selector): `id` (slug), `display_name` y `access` (`verified` o
-  `unverified`). Combina el catálogo del proveedor con el registro local de modelos comprobados, que
-  depende del registro OAuth (`client_id`) y vive en el adaptador, no en el dominio.
-- **Turn** (`application/chat.py`) maneja un envío en curso: consume el proveedor en una tarea asyncio
-  propia y entrega los eventos. No es una entidad del dominio.
+- **Opción de modelo** (`ModelOption`, para el selector): `id` (slug), `display_name` y `access`
+  (`verified` o `unverified`). Es un valor del dominio. El adaptador lo construye combinando el
+  catálogo del proveedor con el registro local de modelos comprobados, que depende del registro OAuth
+  (`client_id`) y vive en el adaptador.
+- **Turn** (`application/use_cases/conversations/chat.py`) maneja un envío en curso: consume el
+  proveedor en una tarea asyncio propia y entrega los eventos. No es una entidad del dominio.
 
 ## 2. Estados y transiciones
 

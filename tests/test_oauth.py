@@ -8,8 +8,8 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 import pytest
 
-from ai_assistant.conversations.adapters.outbound.chatgpt_plan import oauth
-from ai_assistant.conversations.adapters.outbound.chatgpt_plan.credentials import CredentialRecord
+from ai_assistant.infrastructure.adapters.outbound.llm.chatgpt_plan import oauth
+from ai_assistant.infrastructure.adapters.outbound.llm.chatgpt_plan.credentials import CredentialRecord
 
 HOST_ID = "urn:uuid:00000000-0000-4000-8000-000000000000"
 ISSUED = "oaiapp_test_client_0001"

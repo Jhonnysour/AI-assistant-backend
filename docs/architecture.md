@@ -7,18 +7,36 @@ Estado: decisión inicial. Stack propuesto: Python, FastAPI y PostgreSQL.
 Coordinar conversaciones, proveedores, herramientas, contexto y tareas persistentes.
 Las acciones que requieren Windows se delegan a un ejecutor autenticado en desktop.
 
-## Fronteras
+## Capas y reglas de dependencia
 
-- Dominio: entidades, estados y reglas independientes del framework y la infraestructura.
-- Aplicación: casos de uso y puertos que expresan las dependencias necesarias.
-- Adaptadores de entrada: HTTP, conexión de dispositivos y disparadores de tareas.
-- Adaptadores de salida: LLM, persistencia, notificaciones, correo y calendario.
-- Composición: configura dependencias e inyecta adaptadores en los casos de uso.
+Arquitectura hexagonal (puertos y adaptadores) aplicada de forma estricta, con tres capas globales
+(decisión del usuario, 2026-10-30). Dentro de cada capa, el código se agrupa por capacidad:
+conversaciones y, cuando lleguen, recordatorios, documentos y dispositivos.
 
-Dominio y aplicación no importan FastAPI, el ORM ni SDKs de proveedores. Los adaptadores
-dependen de los contratos del núcleo. Los módulos se agrupan por capacidad: conversaciones,
-recordatorios, documentos y dispositivos; se crean conforme a las entregas.
-La ejecución programada puede ser otro proceso del mismo proyecto; no implica microservicios.
+| Capa | Contiene | Puede importar |
+| --- | --- | --- |
+| `domain/` | Entidades, valores, estados, reglas y errores de negocio. | Solo la biblioteca estándar. |
+| `application/ports/inbound/` | Casos de uso que ofrece la aplicación (`Protocol`), con sus datos de entrada y salida y sus errores. | Dominio. |
+| `application/ports/outbound/` | Lo que la aplicación necesita del exterior (`Protocol`): proveedor de LLM, catálogo, repositorio, reloj. | Dominio. |
+| `application/use_cases/` | Implementación de los puertos de entrada usando los de salida. | Dominio y puertos. |
+| `infrastructure/adapters/inbound/` | Traducen peticiones externas (HTTP) a puertos de entrada. | Solo puertos de entrada y `error_codes`. |
+| `infrastructure/adapters/outbound/` | Implementan los puertos de salida (OpenAI, memoria, reloj del sistema). | Dominio, puertos de salida y soporte técnico de `infrastructure/`. |
+| `infrastructure/bootstrap/` | Raíz de composición: elige adaptadores y los inyecta en los casos de uso. | Todo. Es el único módulo que conoce los casos de uso concretos. |
+| `infrastructure/` (resto) | Configuración del entorno, clientes HTTP y almacén cifrado; herramientas operativas (`tools/`). | Infraestructura. |
+
+- Dominio y aplicación no importan FastAPI, Pydantic, httpx, el ORM ni SDKs de proveedores.
+- `application/error_codes.py` es vocabulario de la aplicación: los adaptadores de salida traducen a
+  esos códigos y los de entrada los exponen.
+- Los errores del dominio que un caso de uso puede lanzar se reexportan en su puerto de entrada, para
+  que los adaptadores de entrada no dependan del dominio directamente.
+- `tools/probe.py` es una herramienta operativa del adaptador `chatgpt_plan` (login, estado, catálogo,
+  prueba de envío). Usa ese adaptador directamente y no pasa por los casos de uso, porque lo que
+  prueba es el propio adaptador.
+- [tests/test_architecture.py](../tests/test_architecture.py) analiza los imports de cada módulo y
+  hace fallar las pruebas si se rompe alguna de estas reglas (incluye AC-09).
+
+La ejecución programada puede ser otra raíz de composición del mismo proyecto; no implica
+microservicios.
 
 ## Primera entrega
 
@@ -54,20 +72,29 @@ No hace falta una base de datos hasta implementar persistencia; la sesión inici
 
 ```
 src/ai_assistant/
-  config.py                          # composición: lectura del entorno
-  server.py                          # composición del servidor HTTP: elige proveedor, uvicorn en 127.0.0.1
-  infrastructure/http.py             # clientes httpx (síncrono y asíncrono) con proxy explícito
-  infrastructure/secret_store.py     # archivo cifrado (DPAPI en Windows)
-  conversations/
-    domain/model.py                  # Conversation, UserMessage, AssistantResponse, estados y reglas
-    application/ports.py             # ChatProvider (async), ConversationRepository, eventos del proveedor
-    application/chat.py              # ChatService/Turn: enviar, flujo de eventos y cancelación
-    adapters/inbound/http.py         # FastAPI: endpoints chat-v1, SSE y formato de error
-    adapters/outbound/
-      in_memory_repository.py        # sesión temporal
-      fake_provider.py               # proveedor simulado (pruebas y desarrollo de clientes)
-      chatgpt_plan/                  # proveedor real: oauth, credentials, session, responses, provider
-  probe.py                           # CLI de la prueba de viabilidad
+  domain/conversations/model.py              # Conversation, mensajes, respuestas, ModelOption, estados y reglas
+  application/
+    error_codes.py                           # códigos de error independientes del proveedor
+    ports/inbound/conversations.py           # StartConversation, SendMessage, CancelResponse, ListModels,
+                                             # ResponseStream, eventos del flujo y errores
+    ports/outbound/chat_provider.py          # ChatProvider (async) y eventos del proveedor
+    ports/outbound/model_catalog.py          # ModelCatalog, CatalogUnavailable
+    ports/outbound/conversation_repository.py
+    ports/outbound/clock.py                  # Clock
+    use_cases/conversations/chat.py          # ChatService/Turn: crear, enviar, flujo de eventos y cancelación
+    use_cases/conversations/list_models.py   # ListModelsService
+    use_cases/conversations/messages.py      # mensajes al usuario por código de error
+  infrastructure/
+    config.py                                # lectura del entorno
+    http_client.py                           # clientes httpx (síncrono y asíncrono) con proxy explícito
+    secret_store.py                          # archivo cifrado (DPAPI en Windows)
+    adapters/inbound/http/chat_v1.py         # FastAPI: endpoints chat-v1, SSE y formato de error
+    adapters/outbound/llm/fake.py            # proveedor y catálogo simulados
+    adapters/outbound/llm/chatgpt_plan/      # proveedor real: oauth, credentials, session, responses, provider
+    adapters/outbound/persistence/in_memory.py  # sesión temporal
+    adapters/outbound/system_clock.py        # reloj del sistema (UTC)
+    bootstrap/server.py                      # composición del servidor HTTP, uvicorn en 127.0.0.1
+    tools/probe.py                           # CLI de la prueba de viabilidad del proveedor
 ```
 
 - El contrato hacia los clientes está en [api/chat-v1.md](api/chat-v1.md) y usa SSE.
@@ -85,8 +112,13 @@ src/ai_assistant/
   mensajes, tokens ni texto del usuario) y se comunican como `internal_error`.
 - El adaptador HTTP usa el SSE propio de FastAPI (`EventSourceResponse`). El envío se reserva en una
   dependencia, de modo que `400`/`404`/`409` son respuestas HTTP normales, y esa dependencia cierra
-  el turno al terminar la petición para no dejar la conversación bloqueada. El proveedor por defecto
-  es el simulado; `AI_ASSISTANT_PROVIDER=chatgpt_plan` activa el real.
+  el turno al terminar la petición para no dejar la conversación bloqueada. Recibe los casos de uso
+  como puertos de entrada (`ConversationUseCases`) y no conoce `ChatService`.
+- `ChatService` implementa `StartConversation`, `SendMessage` y `CancelResponse`; `ListModelsService`
+  implementa `ListModels`. El proveedor por defecto es el simulado; `AI_ASSISTANT_PROVIDER=chatgpt_plan`
+  activa el real. Ambas decisiones se toman en `bootstrap/server.py`.
+- `ConversationRepository` es síncrono. Con PostgreSQL y un driver asíncrono, el puerto pasará a
+  `async`.
 
 ## Evolución
 

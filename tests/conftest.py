@@ -5,7 +5,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
 
-from ai_assistant.conversations.adapters.outbound.chatgpt_plan import oauth
+from ai_assistant.infrastructure.adapters.outbound.llm.chatgpt_plan import oauth
 
 
 @pytest.fixture(scope="session")

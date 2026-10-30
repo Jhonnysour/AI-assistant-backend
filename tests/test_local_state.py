@@ -3,7 +3,7 @@ import time
 
 import pytest
 
-from ai_assistant.conversations.adapters.outbound.chatgpt_plan.credentials import (
+from ai_assistant.infrastructure.adapters.outbound.llm.chatgpt_plan.credentials import (
     CREDENTIALS_ENTROPY,
     CredentialRecord,
     CredentialStore,
