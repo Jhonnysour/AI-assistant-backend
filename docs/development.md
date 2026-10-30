@@ -11,6 +11,26 @@ PostgreSQL ([SPEC-002](specs/002-persistencia-conversaciones.md)). No hay despli
 - Un perfil de Chrome que use ese proxy.
 - Docker Desktop, para PostgreSQL (ver [Base de datos](#base-de-datos-postgresql-spec-002)).
 
+## Configuración: archivo `.env`
+
+Toda la configuración local va en un archivo `.env` en la carpeta del repositorio. Git lo ignora y
+[.env.example](../.env.example) es la plantilla con todas las variables comentadas. Lo leen el
+backend ([config.py](../src/ai_assistant/infrastructure/config.py), con python-dotenv) y docker
+compose. Los comandos se ejecutan desde esa carpeta, porque es ahí donde se busca el archivo.
+
+```powershell
+cd "D:\Proyecto Jarvis\AI-assistant-backend"
+Copy-Item .env.example .env   # solo la primera vez; después, editar los valores
+```
+
+- `${VAR}` dentro del archivo se sustituye por otra variable del mismo archivo. Así la URL de la base
+  de datos reutiliza `POSTGRES_PASSWORD` sin repetir la contraseña.
+- Una variable definida en la terminal (`$env:NOMBRE = '…'`) tiene prioridad sobre el archivo. Sirve
+  para cambiar algo en una sola ejecución sin editar el `.env`.
+- El mensaje de arranque del servidor muestra el proveedor y el almacenamiento que está usando, con
+  la contraseña oculta.
+- Las pruebas automáticas no leen el `.env`, salvo `AI_ASSISTANT_TEST_DATABASE_URL`.
+
 ## Red y proxy
 
 Desde este equipo, la conexión directa a `auth.openai.com` respondió 403 y la conexión a través
@@ -19,6 +39,8 @@ del proxy respondió 200 (2026-10-29). Por eso las llamadas salientes al proveed
 El backend **no confía** en que el cliente HTTP herede el entorno: [config.py](../src/ai_assistant/infrastructure/config.py)
 lee las variables y [infrastructure/http_client.py](../src/ai_assistant/infrastructure/http_client.py) crea un cliente
 httpx con `trust_env=False` y rutas explícitas. El dominio no conoce estos ajustes.
+
+Variables (en el `.env` o en la terminal):
 
 | Variable | Valor en desarrollo | Uso |
 | --- | --- | --- |
@@ -30,8 +52,10 @@ httpx con `trust_env=False` y rutas explícitas. El dominio no conoce estos ajus
 | `AI_ASSISTANT_OAUTH_PORT` | opcional | Puerto del callback; por defecto `1455`. |
 | `AI_ASSISTANT_PROVIDER` | `fake` (por defecto) o `chatgpt_plan` | Proveedor del servidor HTTP. `fake` no consume el plan. |
 | `AI_ASSISTANT_API_PORT` | opcional | Puerto del servidor HTTP; por defecto `8000`. |
-| `AI_ASSISTANT_DATABASE_URL` | `postgresql://ai_assistant:…@127.0.0.1:5432/ai_assistant` | Activa PostgreSQL. Sin ella, las conversaciones viven en memoria. |
+| `AI_ASSISTANT_DATABASE_URL` | `postgresql://ai_assistant:${POSTGRES_PASSWORD}@127.0.0.1:5432/ai_assistant` | Activa PostgreSQL. Sin ella, las conversaciones viven en memoria. |
 | `AI_ASSISTANT_TEST_DATABASE_URL` | igual, con la base `ai_assistant_test` | Solo para las pruebas con PostgreSQL. |
+| `POSTGRES_PASSWORD` | aleatoria | Contraseña de PostgreSQL. La usa docker compose al crear el volumen. |
+| `AI_ASSISTANT_DB_PORT` | opcional | Puerto local de PostgreSQL; por defecto `5432`. |
 
 El callback OAuth (`http://127.0.0.1:1455/auth/callback`) es una conexión **entrante** a un servidor
 local de un solo uso: no pasa por el proxy del backend. En Chrome, las direcciones loopback se omiten
@@ -39,20 +63,14 @@ del proxy por defecto (reglas implícitas desde Chrome 72), salvo que el perfil 
 `--proxy-bypass-list="<-loopback>"`; en ese caso el callback fallaría.
 Referencia: [Chromium proxy docs](https://chromium.googlesource.com/chromium/src/+/HEAD/net/docs/proxy.md).
 
-Comprobar las variables en la terminal de PowerShell que se vaya a usar (no están definidas a nivel
-de usuario en Windows; las aporta el entorno con el que se lanzó VS Code):
+Las variables de proxy están en el `.env`. Si la terminal ya trae otras (por ejemplo, las del
+entorno con el que se lanzó VS Code), mandan las de la terminal. Para comprobarlo:
 
 ```powershell
 Get-ChildItem Env:*PROXY*
 ```
 
-Si faltan, definirlas solo para esa sesión:
-
-```powershell
-$env:HTTP_PROXY  = 'http://127.0.0.1:17890'
-$env:HTTPS_PROXY = 'http://127.0.0.1:17890'
-$env:NO_PROXY    = 'localhost,127.0.0.1,::1'
-```
+`pip` no lee el `.env`: por eso la instalación le pasa el proxy con `--proxy`.
 
 ## Instalación
 
@@ -86,12 +104,13 @@ imprime tokens; la URL solo se muestra con `--print-url` o si no hay navegador c
 
 En ese perfil de Chrome, abrir `chrome://version` y anotar la **Ruta del perfil** y la
 **Línea de comandos**. Si el perfil se lanza con un acceso directo con `--user-data-dir` o
-`--proxy-server`, copiar el ejecutable y esas opciones (sin URLs). Ejemplos:
+`--proxy-server`, copiar el ejecutable y esas opciones (sin URLs) en el `.env`, entre comillas
+simples para que se conserven las dobles. Ejemplos:
 
-```powershell
-$env:AI_ASSISTANT_BROWSER = '"C:\Program Files\Google\Chrome\Application\chrome.exe" --profile-directory="Profile 1"'
+```
+AI_ASSISTANT_BROWSER='"C:\Program Files\Google\Chrome\Application\chrome.exe" --profile-directory="Profile 1"'
 # o, si el perfil usa un directorio de datos propio:
-$env:AI_ASSISTANT_BROWSER = '"C:\Program Files\Google\Chrome\Application\chrome.exe" --user-data-dir="D:\ruta\perfil" --proxy-server="http://127.0.0.1:17890"'
+AI_ASSISTANT_BROWSER='"C:\Program Files\Google\Chrome\Application\chrome.exe" --user-data-dir="D:\ruta\perfil" --proxy-server="http://127.0.0.1:17890"'
 ```
 
 Si Chrome ya está abierto con ese perfil, la URL se abre en una pestaña nueva.
@@ -139,28 +158,19 @@ Requisito: Docker Desktop arrancado. Verificado el 2026-10-30 con Docker 29.1.3.
 
 ### Primera vez
 
-La contraseña va en `.env`, que Git ignora. Partir de la plantilla y poner una contraseña propia
-(en este equipo ya existe un `.env` con una contraseña aleatoria):
+Poner una contraseña propia en `POSTGRES_PASSWORD` del `.env` (en este equipo ya hay una aleatoria)
+y arrancar el contenedor:
 
 ```powershell
-cd "D:\Proyecto Jarvis\AI-assistant-backend"
-Copy-Item .env.example .env   # y editar POSTGRES_PASSWORD
 docker compose up -d
 ```
 
 `docker compose ps` debe mostrar el servicio `healthy`. Para pararlo, `docker compose stop` (conserva
 los datos). `docker compose down -v` **borra el volumen y todas las conversaciones**.
 
-### En cada terminal
+### Migraciones
 
-El backend lee la conexión de `AI_ASSISTANT_DATABASE_URL`. Construirla a partir de `.env`, sin
-escribir la contraseña en ningún otro sitio:
-
-```powershell
-$pw = (Select-String -Path .env -Pattern '^POSTGRES_PASSWORD=(.*)$').Matches[0].Groups[1].Value
-$env:AI_ASSISTANT_DATABASE_URL = "postgresql://ai_assistant:$pw@127.0.0.1:5432/ai_assistant"
-```
-
+El backend se conecta con `AI_ASSISTANT_DATABASE_URL` del `.env`, que reutiliza `POSTGRES_PASSWORD`.
 Aplicar las migraciones (la primera vez y cada vez que el código traiga una nueva). El servidor se
 niega a arrancar si el esquema no está al día:
 
@@ -173,13 +183,9 @@ la API responde `persisted: false`.
 
 ### Pruebas con PostgreSQL
 
-Las pruebas del repositorio PostgreSQL, de migraciones y de reinicio del servidor se omiten si no
-existe `AI_ASSISTANT_TEST_DATABASE_URL`. Para ejecutarlas:
-
-```powershell
-$env:AI_ASSISTANT_TEST_DATABASE_URL = "postgresql://ai_assistant:$pw@127.0.0.1:5432/ai_assistant_test"
-.\.venv\Scripts\python.exe -m pytest -q
-```
+Las pruebas del repositorio PostgreSQL, de migraciones y de reinicio del servidor usan
+`AI_ASSISTANT_TEST_DATABASE_URL` (del `.env` o de la terminal) y se omiten si no está definida. Con
+ella, fallan si PostgreSQL no está arrancado.
 
 Nunca apuntar `AI_ASSISTANT_TEST_DATABASE_URL` a `ai_assistant`: las pruebas vacían las tablas.
 
@@ -195,18 +201,11 @@ Con el proveedor simulado (por defecto; no usa red ni el plan):
 .\.venv\Scripts\python.exe -m ai_assistant.infrastructure.bootstrap.server
 ```
 
-Con el proveedor real: requiere `login` previo con la CLI de la prueba y las variables de proxy en
-esa misma terminal. Cada mensaje consume el plan.
+Con el proveedor real: cambiar en el `.env` `AI_ASSISTANT_PROVIDER=chatgpt_plan` y arrancar con el
+mismo comando. Requiere `login` previo con la CLI de la prueba y las variables de proxy del `.env`.
+Cada mensaje consume el plan.
 
-```powershell
-$env:HTTP_PROXY  = 'http://127.0.0.1:17890'
-$env:HTTPS_PROXY = 'http://127.0.0.1:17890'
-$env:NO_PROXY    = 'localhost,127.0.0.1,::1'
-$env:AI_ASSISTANT_PROVIDER = 'chatgpt_plan'
-.\.venv\Scripts\python.exe -m ai_assistant.infrastructure.bootstrap.server
-```
-
-Se detiene con Ctrl+C. Con `AI_ASSISTANT_DATABASE_URL` definida (ver la sección anterior), las
+Se detiene con Ctrl+C. Con `AI_ASSISTANT_DATABASE_URL` definida (ver la sección de base de datos), las
 conversaciones se guardan en PostgreSQL y siguen ahí al volver a arrancarlo; sin ella, se pierden.
 Al arrancar, las respuestas que quedaron a medias por una caída se marcan como interrumpidas.
 

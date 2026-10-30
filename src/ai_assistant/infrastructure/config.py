@@ -1,10 +1,16 @@
-"""Configuración leída del entorno. Pertenece a la composición, no al dominio."""
+"""Configuración leída del archivo .env y del entorno. Pertenece a la composición, no al dominio.
+
+El .env (no versionado, ver .env.example) se busca en la carpeta desde la que se ejecuta el backend.
+Una variable definida en el entorno del proceso tiene prioridad sobre la del archivo.
+"""
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
 from pathlib import Path
+
+from dotenv import dotenv_values
 
 DEFAULT_OAUTH_CALLBACK_PORT = 1455
 DEFAULT_API_PORT = 8000
@@ -38,8 +44,18 @@ def _default_data_dir(environ: dict[str, str]) -> Path:
     return Path.home() / ".local" / "share" / "ai-assistant"
 
 
+ENV_FILE = Path(".env")
+
+
+def read_environment(env_file: Path | None = None) -> dict[str, str]:
+    """Variables del .env (con ${VAR} resuelto) sobrescritas por las del entorno del proceso."""
+    path = ENV_FILE if env_file is None else env_file
+    from_file = dotenv_values(path) if path.is_file() else {}
+    return {**{k: v for k, v in from_file.items() if v is not None}, **os.environ}
+
+
 def load_settings(environ: dict[str, str] | None = None) -> Settings:
-    environ = dict(os.environ) if environ is None else environ
+    environ = read_environment() if environ is None else environ
     no_proxy = _env(environ, "NO_PROXY") or ""
     data_dir = _env(environ, "AI_ASSISTANT_DATA_DIR")
     port = _env(environ, "AI_ASSISTANT_OAUTH_PORT")
