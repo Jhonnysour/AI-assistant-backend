@@ -2,7 +2,8 @@
 
 Uso: python -m ai_assistant.infrastructure.bootstrap.server
 Escucha solo en 127.0.0.1: la API no tiene autenticación todavía y no debe exponerse.
-AI_ASSISTANT_PROVIDER elige el proveedor: "fake" (por defecto, no consume el plan) o "chatgpt_plan".
+AI_ASSISTANT_PROVIDER elige el proveedor: "fake" (por defecto, no consume nada), "chatgpt_plan" (plan de
+ChatGPT) u "openrouter" (API key, de pago por uso).
 AI_ASSISTANT_DATABASE_URL activa PostgreSQL; sin ella, las conversaciones viven en memoria.
 
 Es el único módulo que conoce a la vez los casos de uso y los adaptadores concretos.
@@ -35,6 +36,11 @@ from ai_assistant.infrastructure.adapters.outbound.llm.chatgpt_plan.provider imp
 )
 from ai_assistant.infrastructure.adapters.outbound.llm.chatgpt_plan.session import ChatGptPlanSession
 from ai_assistant.infrastructure.adapters.outbound.llm.fake import FakeChatProvider, FakeModelCatalog
+from ai_assistant.infrastructure.adapters.outbound.llm.openrouter.credentials import OpenRouterState
+from ai_assistant.infrastructure.adapters.outbound.llm.openrouter.provider import (
+    OpenRouterCatalog,
+    OpenRouterProvider,
+)
 from ai_assistant.infrastructure.adapters.outbound.persistence.in_memory import InMemoryConversationRepository
 from ai_assistant.infrastructure.adapters.outbound.persistence.postgres.repository import (
     PostgresConversationRepository,
@@ -93,6 +99,13 @@ def app_from_settings(settings: Settings) -> FastAPI:
     if settings.chat_provider == "fake":
         provider: ChatProvider = FakeChatProvider(delay_seconds=FAKE_CHUNK_DELAY_SECONDS)
         catalog: ModelCatalog = FakeModelCatalog()
+    elif settings.chat_provider == "openrouter":
+        openrouter = OpenRouterState.open(settings.data_dir)
+        api_key = openrouter.api_key.require()  # Falla al arrancar si no se guardó la key.
+        openrouter_http = build_async_http_client(settings)
+        shutdown.append(openrouter_http.aclose)
+        provider = OpenRouterProvider(openrouter_http, api_key, openrouter.model_log)
+        catalog = OpenRouterCatalog(openrouter_http, api_key, settings.openrouter_models, openrouter.model_log)
     else:
         state = LocalState.open(settings.data_dir)
         session = ChatGptPlanSession(state.credentials)
@@ -134,6 +147,8 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     print(f"Proveedor: {settings.chat_provider}")
     print(f"Almacenamiento: {storage_description(settings)}")
+    if settings.chat_provider == "openrouter":
+        print(f"Modelos permitidos: {', '.join(settings.openrouter_models)} (de pago por uso)")
     if settings.chat_provider != "fake":
         print(f"Red: HTTPS vía {redact_url(settings.https_proxy)}; NO_PROXY={','.join(settings.no_proxy) or '(vacío)'}")
     print(f"API: http://{LOOPBACK_HOST}:{settings.api_port}/v1 (solo local, sin autenticación)", flush=True)

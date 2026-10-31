@@ -18,6 +18,7 @@ No hay despliegue.
 7. [Contrato de chat v1 (SSE)](docs/api/chat-v1.md)
 8. [Modelo del chat de SPEC-001](docs/domain/conversations.md)
 9. [Persistencia: SPEC-002](docs/specs/002-persistencia-conversaciones.md) y [esquema de datos](docs/data/conversations-schema.md)
+10. [Proveedor OpenRouter: SPEC-003](docs/specs/003-proveedor-openrouter.md)
 
 Este repositorio alberga también la documentación compartida del producto.
 La primera entrega se desarrolla localmente; Coolify se incorpora cuando exista un flujo verificable.

@@ -91,16 +91,20 @@ src/ai_assistant/
   infrastructure/
     config.py                                # lectura del entorno
     http_client.py                           # clientes httpx (síncrono y asíncrono) con proxy explícito
+    sse.py                                   # lectura de Server-Sent Events, común a los proveedores
+    model_access_log.py                      # registro local de modelos con acceso comprobado
     secret_store.py                          # archivo cifrado (DPAPI en Windows)
     adapters/inbound/http/chat_v1.py         # FastAPI: endpoints chat-v1, SSE y formato de error
     adapters/outbound/llm/fake.py            # proveedor y catálogo simulados
     adapters/outbound/llm/chatgpt_plan/      # proveedor real: oauth, credentials, session, responses, provider
+    adapters/outbound/llm/openrouter/        # OpenRouter con API key cifrada: credentials, provider (SPEC-003)
     adapters/outbound/persistence/in_memory.py  # sin base de datos (pruebas, uso sin PostgreSQL)
     adapters/outbound/persistence/postgres/  # tables.py (SQLAlchemy Core), repository.py, schema.py, migrations/
     adapters/outbound/system_clock.py        # reloj del sistema (UTC)
     bootstrap/server.py                      # composición del servidor HTTP, uvicorn en 127.0.0.1
     tools/probe.py                           # CLI de la prueba de viabilidad del proveedor
     tools/migrate.py                         # aplica las migraciones de PostgreSQL
+    tools/openrouter.py                      # guarda, consulta y borra la API key de OpenRouter
 ```
 
 - El contrato hacia los clientes está en [api/chat-v1.md](api/chat-v1.md) y usa SSE.

@@ -50,7 +50,8 @@ Variables (en el `.env` o en la terminal):
 | `AI_ASSISTANT_BROWSER` | opcional | Comando para abrir el perfil de Chrome correcto (ver abajo). |
 | `AI_ASSISTANT_DATA_DIR` | opcional | Datos locales; por defecto `%LOCALAPPDATA%\ai-assistant`. |
 | `AI_ASSISTANT_OAUTH_PORT` | opcional | Puerto del callback; por defecto `1455`. |
-| `AI_ASSISTANT_PROVIDER` | `fake` (por defecto) o `chatgpt_plan` | Proveedor del servidor HTTP. `fake` no consume el plan. |
+| `AI_ASSISTANT_PROVIDER` | `fake` (por defecto), `chatgpt_plan` u `openrouter` | Proveedor del servidor HTTP. `fake` no consume nada; `openrouter` es de pago por uso. |
+| `AI_ASSISTANT_OPENROUTER_MODELS` | `deepseek/deepseek-v4.1-flash-1017` (por defecto) | Modelos de OpenRouter que muestra el selector, separados por comas. |
 | `AI_ASSISTANT_API_PORT` | opcional | Puerto del servidor HTTP; por defecto `8000`. |
 | `AI_ASSISTANT_DATABASE_URL` | `postgresql://ai_assistant:${POSTGRES_PASSWORD}@127.0.0.1:5432/ai_assistant` | Activa PostgreSQL. Sin ella, las conversaciones viven en memoria. |
 | `AI_ASSISTANT_TEST_DATABASE_URL` | igual, con la base `ai_assistant_test` | Solo para las pruebas con PostgreSQL. |
@@ -224,6 +225,20 @@ La documentación interactiva de FastAPI queda en `http://127.0.0.1:8000/docs`.
 El log de uvicorn registra método, ruta y código de cada petición (identificadores de conversación,
 nunca el texto). Los fallos internos registran solo el tipo de error y las líneas de código.
 
+## OpenRouter (SPEC-003)
+
+Proveedor de pago por uso con API key ([SPEC-003](specs/003-proveedor-openrouter.md)). La key se
+guarda **cifrada con DPAPI**, nunca en el `.env`. La pide sin mostrarla:
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_assistant.infrastructure.tools.openrouter set-key
+.\.venv\Scripts\python.exe -m ai_assistant.infrastructure.tools.openrouter status
+```
+
+`forget` la borra. Después, en el `.env`, `AI_ASSISTANT_PROVIDER=openrouter` y arrancar el servidor
+como siempre. Si no hay key guardada, el servidor no arranca y dice qué comando ejecutar. Cada
+mensaje consume créditos de OpenRouter; para desarrollar sin coste, volver a `fake`.
+
 ## Datos locales y credenciales
 
 En `%LOCALAPPDATA%\ai-assistant` (fuera del repositorio):
@@ -233,6 +248,8 @@ En `%LOCALAPPDATA%\ai-assistant` (fuera del repositorio):
 | `host-id` | `ext_agent_host_id` opaco (`urn:uuid:…`) | No es un secreto ni una credencial. |
 | `chatgpt-plan\credentials.dpapi` | client_id emitido, tokens, scopes, caducidad | Cifrado con DPAPI ligado a tu cuenta de Windows y escritura atómica. |
 | `chatgpt-plan\verified-models.json` | Modelos con `response.completed` y fecha | Sin secretos. |
+| `openrouter\api-key.dpapi` | API key de OpenRouter | Cifrado con DPAPI ligado a tu cuenta de Windows. |
+| `openrouter\verified-models.json` | Modelos de OpenRouter con una respuesta completada | Sin secretos. |
 
 Estar fuera del repositorio no basta: el archivo de credenciales está cifrado y no se puede descifrar
 desde otra cuenta ni desde otra máquina. Un proceso que se ejecute con tu misma cuenta de Windows sí

@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ai_assistant.domain.conversations.model import Conversation
-from ai_assistant.infrastructure.adapters.outbound.llm.chatgpt_plan.responses import parse_sse
+from ai_assistant.infrastructure.sse import parse_sse
 from ai_assistant.infrastructure.adapters.outbound.persistence.postgres import schema
 from ai_assistant.infrastructure.adapters.outbound.persistence.postgres.repository import (
     PostgresConversationRepository,

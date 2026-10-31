@@ -126,6 +126,8 @@ Errores:
 | 401 | `auth_required` | Avisa de que hay que volver a iniciar sesión en el backend. |
 | 403 | `not_eligible` | Avisa de que la cuenta no lo permite; reintentar no sirve. |
 | 503 | `usage_limit` | Avisa del límite de uso; intentarlo más tarde. |
+| 503 | `insufficient_credits` | Avisa de que la cuenta del proveedor no tiene saldo. |
+| 503 | `rate_limited` | Avisa de que hay que esperar unos segundos. |
 | 503 | `provider_unavailable` | Avisa de que no se pudo contactar; ofrece reintentar. |
 | 502 | `provider_error` | Error genérico. |
 | 500 | `internal_error` | Error genérico. |
@@ -224,6 +226,8 @@ Son independientes de OpenAI; el adaptador traduce los códigos propios del prov
 | `auth_required` | no | El backend necesita volver a iniciar sesión con el proveedor. |
 | `not_eligible` | no | La cuenta del proveedor no permite esta operación. |
 | `usage_limit` | no | Se alcanzó el límite de uso del proveedor. Inténtalo más tarde. |
+| `insufficient_credits` | no | La cuenta del proveedor no tiene saldo suficiente. |
+| `rate_limited` | sí | El proveedor está limitando las peticiones. Puedes reintentar en unos segundos. |
 | `model_unavailable` | no | El modelo elegido no está disponible para esta cuenta. |
 | `provider_unavailable` | sí | No se pudo contactar con el proveedor. Puedes reintentar. |
 | `incomplete` | sí | El proveedor terminó la respuesta sin completarla. Puedes reintentar. |

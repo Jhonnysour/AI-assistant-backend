@@ -14,6 +14,8 @@ from typing import Literal
 
 import httpx
 
+from ai_assistant.infrastructure.sse import sse_events
+
 API_BASE = "https://api.openai.com/v1"
 
 
@@ -98,40 +100,6 @@ async def alist_models(http: httpx.AsyncClient, access_token: str) -> list[Catal
     return parse_catalog(response.json())
 
 
-class SseDecoder:
-    """Agrupa líneas Server-Sent Events en (event, data), línea a línea."""
-
-    def __init__(self) -> None:
-        self._event: str | None = None
-        self._data: list[str] = []
-
-    def feed(self, line: str) -> tuple[str | None, str] | None:
-        if line == "":
-            return self.flush()
-        if not line.startswith(":"):
-            name, _, value = line.partition(":")
-            value = value[1:] if value.startswith(" ") else value
-            if name == "event":
-                self._event = value
-            elif name == "data":
-                self._data.append(value)
-        return None
-
-    def flush(self) -> tuple[str | None, str] | None:
-        event = (self._event, "\n".join(self._data)) if self._data else None
-        self._event, self._data = None, []
-        return event
-
-
-def parse_sse(lines: Iterable[str]) -> Iterator[tuple[str | None, str]]:
-    decoder = SseDecoder()
-    for line in lines:
-        if (event := decoder.feed(line)) is not None:
-            yield event
-    if (event := decoder.flush()) is not None:
-        yield event
-
-
 class EventInterpreter:
     """Traduce eventos de Responses. Solo response.completed confirma una respuesta completa.
 
@@ -211,7 +179,7 @@ async def stream_response(
             if response.status_code != 200:
                 await response.aread()
                 raise _provider_error(response)
-            async for name, raw in _sse_events(response):
+            async for name, raw in sse_events(response):
                 if (event := interpreter.feed(name, raw)) is not None:
                     yield event
                 if interpreter.finished:
@@ -219,12 +187,3 @@ async def stream_response(
             yield interpreter.end()
     except httpx.TransportError as error:
         yield interpreter.end(type(error).__name__)
-
-
-async def _sse_events(response: httpx.Response) -> AsyncIterator[tuple[str | None, str]]:
-    decoder = SseDecoder()
-    async for line in response.aiter_lines():
-        if (event := decoder.feed(line)) is not None:
-            yield event
-    if (event := decoder.flush()) is not None:
-        yield event

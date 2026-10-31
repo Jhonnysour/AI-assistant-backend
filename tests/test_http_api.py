@@ -13,7 +13,7 @@ import uvicorn
 from fastapi.testclient import TestClient
 
 from ai_assistant.infrastructure.config import load_settings
-from ai_assistant.infrastructure.adapters.outbound.llm.chatgpt_plan.responses import parse_sse
+from ai_assistant.infrastructure.sse import parse_sse
 from ai_assistant.infrastructure.adapters.outbound.llm.fake import FakeChatProvider, FakeModelCatalog
 from ai_assistant.infrastructure.adapters.outbound.persistence.in_memory import (
     InMemoryConversationRepository,

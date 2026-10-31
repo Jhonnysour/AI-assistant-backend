@@ -14,8 +14,10 @@ from dotenv import dotenv_values
 
 DEFAULT_OAUTH_CALLBACK_PORT = 1455
 DEFAULT_API_PORT = 8000
-# "fake" no llama a ningún proveedor; "chatgpt_plan" usa la sesión de Sign in with ChatGPT.
-CHAT_PROVIDERS = ("fake", "chatgpt_plan")
+# "fake" no llama a ningún proveedor; "chatgpt_plan" usa la sesión de Sign in with ChatGPT;
+# "openrouter" usa una API key de OpenRouter (de pago por uso).
+CHAT_PROVIDERS = ("fake", "chatgpt_plan", "openrouter")
+DEFAULT_OPENROUTER_MODELS = ("deepseek/deepseek-v4.1-flash-1017",)
 
 
 @dataclass(frozen=True)
@@ -29,12 +31,17 @@ class Settings:
     chat_provider: str = "fake"
     api_port: int = DEFAULT_API_PORT
     database_url: str | None = None  # postgresql://…; sin ella, las conversaciones viven en memoria.
+    openrouter_models: tuple[str, ...] = DEFAULT_OPENROUTER_MODELS  # Los que muestra el selector.
 
 
 def _env(environ: dict[str, str], name: str) -> str | None:
     # En Windows las variables no distinguen mayúsculas; en Linux se aceptan ambas formas.
     value = environ.get(name) or environ.get(name.lower())
     return value.strip() if value and value.strip() else None
+
+
+def _list(value: str | None) -> tuple[str, ...]:
+    return tuple(entry.strip() for entry in (value or "").split(",") if entry.strip())
 
 
 def _default_data_dir(environ: dict[str, str]) -> Path:
@@ -73,4 +80,5 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
         chat_provider=provider,
         api_port=int(api_port) if api_port else DEFAULT_API_PORT,
         database_url=_env(environ, "AI_ASSISTANT_DATABASE_URL"),
+        openrouter_models=_list(_env(environ, "AI_ASSISTANT_OPENROUTER_MODELS")) or DEFAULT_OPENROUTER_MODELS,
     )

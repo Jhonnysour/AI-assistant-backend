@@ -6,6 +6,8 @@ ERROR_MESSAGES = {
     codes.AUTH_REQUIRED: "El backend necesita volver a iniciar sesión con el proveedor.",
     codes.NOT_ELIGIBLE: "La cuenta del proveedor no permite esta operación.",
     codes.USAGE_LIMIT: "Se alcanzó el límite de uso del proveedor. Inténtalo más tarde.",
+    codes.INSUFFICIENT_CREDITS: "La cuenta del proveedor no tiene saldo suficiente.",
+    codes.RATE_LIMITED: "El proveedor está limitando las peticiones. Puedes reintentar en unos segundos.",
     codes.MODEL_UNAVAILABLE: "El modelo elegido no está disponible para esta cuenta.",
     codes.PROVIDER_UNAVAILABLE: "No se pudo contactar con el proveedor. Puedes reintentar.",
     codes.INCOMPLETE: "El proveedor terminó la respuesta sin completarla. Puedes reintentar.",

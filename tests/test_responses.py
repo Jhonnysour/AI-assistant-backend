@@ -5,6 +5,7 @@ import httpx
 import pytest
 
 from ai_assistant.infrastructure.adapters.outbound.llm.chatgpt_plan import responses
+from ai_assistant.infrastructure.sse import parse_sse
 from ai_assistant.infrastructure.adapters.outbound.llm.chatgpt_plan.responses import (
     StreamOutcome,
     TextDelta,
@@ -40,7 +41,7 @@ def stream(transport, model, items):
 
 def test_parse_sse_groups_lines_and_ignores_comments():
     lines = [": keep-alive", "event: a", "data: {\"x\": 1}", "", "data: line1", "data: line2", ""]
-    assert list(responses.parse_sse(lines)) == [("a", '{"x": 1}'), (None, "line1\nline2")]
+    assert list(parse_sse(lines)) == [("a", '{"x": 1}'), (None, "line1\nline2")]
 
 
 def test_deltas_then_completed():

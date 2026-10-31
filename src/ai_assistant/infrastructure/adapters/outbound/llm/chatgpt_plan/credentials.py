@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ai_assistant.infrastructure.model_access_log import ModelAccessLog
 from ai_assistant.infrastructure.secret_store import ProtectedFile, default_protector
 
 PLAN_USAGE_SCOPE = "chatgpt.tokens.use.direct"
@@ -65,32 +66,6 @@ class CredentialStore:
 
     def delete(self) -> None:
         self._file.delete()
-
-
-@dataclass
-class ModelAccessLog:
-    """Modelos con acceso comprobado (response.completed), por client_id emitido.
-
-    El catálogo indica qué se ofrece; solo esta lista indica qué se ha comprobado.
-    No contiene secretos. Se lee del disco en cada uso porque la CLI de prueba y el servidor
-    pueden escribirla.
-    """
-
-    path: Path
-
-    def _load(self) -> dict[str, dict[str, str]]:
-        if not self.path.exists():
-            return {}
-        return json.loads(self.path.read_text(encoding="utf-8"))
-
-    def verified(self, client_id: str) -> dict[str, str]:
-        return dict(self._load().get(client_id, {}))
-
-    def record_completed(self, client_id: str, model: str) -> None:
-        data = self._load()
-        data.setdefault(client_id, {})[model] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 @dataclass(frozen=True)
