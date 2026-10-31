@@ -38,6 +38,23 @@ no cambiar automáticamente a una API de pago. El desarrollo con un proveedor si
   **Sustituido por [SPEC-002](002-persistencia-conversaciones.md) (2026-10-30)**: las conversaciones se
   guardan en PostgreSQL. La UI solo avisa si el backend responde `persisted: false`.
 
+## Decisiones de integración desktop–backend (2026-10-30)
+
+Decididas por el usuario. El detalle de su implementación pertenece al repositorio de desktop.
+
+| # | Decisión |
+| --- | --- |
+| D1 | Desktop se monta con **Electron Forge y su plantilla de Vite con TypeScript**. Las versiones se eligen consultando la documentación oficial al crear el proyecto. |
+| D2 | **El cliente de la API vive en el proceso main de Electron**, no en el renderer. El renderer llama a métodos concretos expuestos por el preload; main hace las peticiones HTTP, lee el SSE y reenvía los eventos por IPC. |
+| D3 | El backend **mantiene CORS desactivado** (`AI_ASSISTANT_CORS_ORIGINS` vacío): las peticiones de main no son de navegador. |
+| D4 | El renderer no necesita red: su política de contenido puede prohibir conexiones (`connect-src 'none'`). Así un XSS en el texto mostrado no puede llamar a la API directamente. |
+| D5 | Cuando la API tenga autenticación, la credencial de la aplicación se guardará en main y nunca llegará al renderer. |
+
+Motivos: con el renderer haciendo `fetch`, la app empaquetada se carga desde `file://` (origen `null`) y
+permitir ese origen en CORS dejaría llamar a la API desde iframes aislados de cualquier web. Además, el
+texto generado por el LLM se pinta en el renderer, y conviene que un error al mostrarlo no dé acceso
+a la API ni a credenciales.
+
 ## Criterios de aceptación
 
 | ID | Comprobación |

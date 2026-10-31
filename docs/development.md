@@ -55,7 +55,7 @@ Variables (en el `.env` o en la terminal):
 | `AI_ASSISTANT_API_PORT` | opcional | Puerto del servidor HTTP; por defecto `8000`. |
 | `AI_ASSISTANT_DATABASE_URL` | `postgresql://ai_assistant:${POSTGRES_PASSWORD}@127.0.0.1:5432/ai_assistant` | Activa PostgreSQL. Sin ella, las conversaciones viven en memoria. |
 | `AI_ASSISTANT_TEST_DATABASE_URL` | igual, con la base `ai_assistant_test` | Solo para las pruebas con PostgreSQL. |
-| `AI_ASSISTANT_CORS_ORIGINS` | vacío (por defecto) | Orígenes de navegador que pueden llamar a la API, separados por comas. Lo fijará la especificación de desktop. |
+| `AI_ASSISTANT_CORS_ORIGINS` | vacío (por defecto) | Orígenes de navegador que pueden llamar a la API, separados por comas. Desktop no lo usa (llama desde su proceso main). |
 | `POSTGRES_PASSWORD` | aleatoria | Contraseña de PostgreSQL. La usa docker compose al crear el volumen. |
 | `AI_ASSISTANT_DB_PORT` | opcional | Puerto local de PostgreSQL; por defecto `5432`. |
 

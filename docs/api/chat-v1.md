@@ -22,9 +22,10 @@ incompatibles requieren `/v2`.
 - **Cabecera `Host`:** solo se aceptan `127.0.0.1` y `localhost` (con cualquier puerto). Cualquier
   otra recibe `400` en texto plano (`Invalid host header`) antes de llegar a la aplicación. Evita el
   *DNS rebinding*: una web que hace apuntar su dominio a `127.0.0.1` sigue enviando su propio nombre.
-- **CORS:** desactivado por defecto. Los orígenes de navegador admitidos (por ejemplo, el renderer de
-  desktop) se configuran con `AI_ASSISTANT_CORS_ORIGINS`; a los demás no se les envía ninguna
-  cabecera CORS, así que el navegador bloquea sus peticiones con JSON.
+- **CORS:** desactivado. Desktop llama a la API desde su proceso main, no desde el renderer
+  ([SPEC-001, D2–D3](../specs/001-chat-texto.md#decisiones-de-integración-desktopbackend-2026-10-30)),
+  así que no lo necesita. `AI_ASSISTANT_CORS_ORIGINS` queda para un futuro cliente web; sin orígenes
+  configurados no se envía ninguna cabecera CORS y el navegador bloquea las peticiones con JSON.
 - Las credenciales del proveedor nunca salen del backend.
 
 ## Convenciones
