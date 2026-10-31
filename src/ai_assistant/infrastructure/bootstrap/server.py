@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import logging
 import sys
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from sqlalchemy.engine import make_url
 
 from ai_assistant.application.ports.outbound.chat_provider import ChatProvider
@@ -54,6 +56,10 @@ from ai_assistant.infrastructure.http_client import build_async_http_client, bui
 _log = logging.getLogger(__name__)
 
 LOOPBACK_HOST = "127.0.0.1"
+# Nombres con los que se puede llamar a la API. Rechazar cualquier otro Host evita el DNS rebinding:
+# una web que hace apuntar su dominio a 127.0.0.1 sigue enviando su propio nombre en Host.
+LOCAL_HOSTS = ("127.0.0.1", "localhost")
+CORS_METHODS = ["GET", "POST", "PATCH", "DELETE"]
 FAKE_CHUNK_DELAY_SECONDS = 0.05  # Para que el streaming simulado se vea en los clientes.
 
 Lifespan = Callable[[FastAPI], AbstractAsyncContextManager[None]]
@@ -70,9 +76,14 @@ def build_use_cases(conversations: ConversationRepository, provider: ChatProvide
     )
 
 
-def create_app(use_cases: chat_v1.ConversationUseCases, lifespan: Lifespan | None = None) -> FastAPI:
+def create_app(use_cases: chat_v1.ConversationUseCases, lifespan: Lifespan | None = None,
+               allowed_hosts: Sequence[str] = LOCAL_HOSTS, cors_origins: Sequence[str] = ()) -> FastAPI:
     app = FastAPI(title="AI Assistant", version="chat-v1", lifespan=lifespan)
     chat_v1.install(app, use_cases)
+    if cors_origins:  # Sin orígenes configurados no se envía ninguna cabecera CORS.
+        app.add_middleware(CORSMiddleware, allow_origins=list(cors_origins), allow_methods=CORS_METHODS,
+                           allow_headers=["Content-Type"])
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(allowed_hosts))  # La más externa.
     return app
 
 
@@ -130,7 +141,8 @@ def app_from_settings(settings: Settings) -> FastAPI:
             for step in reversed(shutdown):
                 await step()
 
-    return create_app(build_use_cases(conversations, provider, catalog), lifespan)
+    return create_app(build_use_cases(conversations, provider, catalog), lifespan,
+                      cors_origins=settings.cors_origins)
 
 
 def storage_description(settings: Settings) -> str:
@@ -151,6 +163,8 @@ def main() -> None:
         print(f"Modelos permitidos: {', '.join(settings.openrouter_models)} (de pago por uso)")
     if settings.chat_provider != "fake":
         print(f"Red: HTTPS vía {redact_url(settings.https_proxy)}; NO_PROXY={','.join(settings.no_proxy) or '(vacío)'}")
+    if settings.cors_origins:
+        print(f"CORS: {', '.join(settings.cors_origins)}")
     print(f"API: http://{LOOPBACK_HOST}:{settings.api_port}/v1 (solo local, sin autenticación)", flush=True)
     uvicorn.run(app_from_settings(settings), host=LOOPBACK_HOST, port=settings.api_port)
 

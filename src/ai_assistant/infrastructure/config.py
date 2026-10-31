@@ -32,6 +32,7 @@ class Settings:
     api_port: int = DEFAULT_API_PORT
     database_url: str | None = None  # postgresql://…; sin ella, las conversaciones viven en memoria.
     openrouter_models: tuple[str, ...] = DEFAULT_OPENROUTER_MODELS  # Los que muestra el selector.
+    cors_origins: tuple[str, ...] = ()  # Orígenes de navegador admitidos (p. ej. el renderer de desktop).
 
 
 def _env(environ: dict[str, str], name: str) -> str | None:
@@ -81,4 +82,5 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
         api_port=int(api_port) if api_port else DEFAULT_API_PORT,
         database_url=_env(environ, "AI_ASSISTANT_DATABASE_URL"),
         openrouter_models=_list(_env(environ, "AI_ASSISTANT_OPENROUTER_MODELS")) or DEFAULT_OPENROUTER_MODELS,
+        cors_origins=_list(_env(environ, "AI_ASSISTANT_CORS_ORIGINS")),
     )

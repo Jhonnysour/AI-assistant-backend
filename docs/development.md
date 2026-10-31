@@ -55,6 +55,7 @@ Variables (en el `.env` o en la terminal):
 | `AI_ASSISTANT_API_PORT` | opcional | Puerto del servidor HTTP; por defecto `8000`. |
 | `AI_ASSISTANT_DATABASE_URL` | `postgresql://ai_assistant:${POSTGRES_PASSWORD}@127.0.0.1:5432/ai_assistant` | Activa PostgreSQL. Sin ella, las conversaciones viven en memoria. |
 | `AI_ASSISTANT_TEST_DATABASE_URL` | igual, con la base `ai_assistant_test` | Solo para las pruebas con PostgreSQL. |
+| `AI_ASSISTANT_CORS_ORIGINS` | vacío (por defecto) | Orígenes de navegador que pueden llamar a la API, separados por comas. Lo fijará la especificación de desktop. |
 | `POSTGRES_PASSWORD` | aleatoria | Contraseña de PostgreSQL. La usa docker compose al crear el volumen. |
 | `AI_ASSISTANT_DB_PORT` | opcional | Puerto local de PostgreSQL; por defecto `5432`. |
 
@@ -193,7 +194,8 @@ Nunca apuntar `AI_ASSISTANT_TEST_DATABASE_URL` a `ai_assistant`: las pruebas vac
 ## Servidor HTTP (contrato chat-v1)
 
 Implementa [chat-v1](api/chat-v1.md). Escucha **solo en `127.0.0.1`**: la API no tiene autenticación
-y el host no es configurable a propósito. Si se actualiza desde una versión anterior, repetir el
+y el host no es configurable a propósito. Además rechaza con `400` las peticiones cuya cabecera `Host`
+no sea `127.0.0.1` ni `localhost` (protección contra *DNS rebinding*). Si se actualiza desde una versión anterior, repetir el
 `pip install` de la instalación (añade FastAPI, uvicorn, SQLAlchemy, asyncpg y Alembic).
 
 Con el proveedor simulado (por defecto; no usa red ni el plan):

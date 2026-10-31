@@ -19,6 +19,12 @@ incompatibles requieren `/v2`.
   viven en memoria y `persisted` vale `false`; la UI debe indicarlo en ese caso.
 - **Autenticación:** ninguna mientras el backend escuche solo en `127.0.0.1`. Es obligatoria antes de
   exponerlo en el VPS (diseño pendiente).
+- **Cabecera `Host`:** solo se aceptan `127.0.0.1` y `localhost` (con cualquier puerto). Cualquier
+  otra recibe `400` en texto plano (`Invalid host header`) antes de llegar a la aplicación. Evita el
+  *DNS rebinding*: una web que hace apuntar su dominio a `127.0.0.1` sigue enviando su propio nombre.
+- **CORS:** desactivado por defecto. Los orígenes de navegador admitidos (por ejemplo, el renderer de
+  desktop) se configuran con `AI_ASSISTANT_CORS_ORIGINS`; a los demás no se les envía ninguna
+  cabecera CORS, así que el navegador bloquea sus peticiones con JSON.
 - Las credenciales del proveedor nunca salen del backend.
 
 ## Convenciones

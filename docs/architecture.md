@@ -50,6 +50,9 @@ Persistencia en PostgreSQL desde [SPEC-002](specs/002-persistencia-conversacione
 
 ## Despliegue y red
 
+- En local, la API solo acepta los nombres `127.0.0.1` y `localhost` en la cabecera `Host`, y CORS
+  solo para los orígenes configurados (`AI_ASSISTANT_CORS_ORIGINS`). Ambos se fijan en la raíz de
+  composición (`bootstrap/server.py`), no en el adaptador HTTP.
 - Desktop y mobile se comunican solo con la API de este backend. No llaman al proveedor ni a la base
   de datos, y nunca reciben credenciales del proveedor.
 - Una vez desplegado en el VPS (Ubuntu con Coolify), es el backend quien llama al proveedor desde el

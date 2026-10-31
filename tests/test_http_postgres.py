@@ -30,7 +30,7 @@ def stream(client, conversation_id, text):
 
 
 def test_pc01_conversation_survives_a_restart(clean_postgres):
-    with TestClient(app_from_settings(settings_for(clean_postgres))) as client:
+    with TestClient(base_url="http://127.0.0.1", app=app_from_settings(settings_for(clean_postgres))) as client:
         created = client.post("/v1/conversations").json()
         assert created["persisted"] is True
         conversation_id = created["conversation_id"]
@@ -38,7 +38,7 @@ def test_pc01_conversation_survives_a_restart(clean_postgres):
         client.patch(f"/v1/conversations/{conversation_id}", json={"title": "Recordatorio"})
         before = client.get(f"/v1/conversations/{conversation_id}").json()
 
-    with TestClient(app_from_settings(settings_for(clean_postgres))) as client:  # Proceso nuevo.
+    with TestClient(base_url="http://127.0.0.1", app=app_from_settings(settings_for(clean_postgres))) as client:  # Proceso nuevo.
         after = client.get(f"/v1/conversations/{conversation_id}").json()
         assert after == before
         assert after["persisted"] is True and after["title"] == "Recordatorio"
@@ -66,7 +66,7 @@ def test_pc03_response_left_streaming_is_interrupted_on_startup(clean_postgres):
             await engine.dispose()
 
     conversation_id = asyncio.run(crash_mid_response())
-    with TestClient(app_from_settings(settings_for(clean_postgres))) as client:
+    with TestClient(base_url="http://127.0.0.1", app=app_from_settings(settings_for(clean_postgres))) as client:
         reply = client.get(f"/v1/conversations/{conversation_id}").json()["messages"][1]
         assert (reply["status"], reply["text"], reply["error"]["code"]) == ("interrupted", "parcial", "interrupted")
         assert reply["finished_at"]
@@ -79,7 +79,7 @@ def test_server_refuses_to_start_with_outdated_schema(clean_postgres):
     command.downgrade(schema.alembic_config(clean_postgres), "base")
     try:
         with pytest.raises(schema.SchemaOutdated):
-            with TestClient(app_from_settings(settings_for(clean_postgres))):
+            with TestClient(base_url="http://127.0.0.1", app=app_from_settings(settings_for(clean_postgres))):
                 pass
     finally:
         schema.upgrade(clean_postgres)

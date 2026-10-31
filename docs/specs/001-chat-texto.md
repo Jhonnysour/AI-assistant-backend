@@ -71,6 +71,8 @@ no cambiar automáticamente a una API de pago. El desarrollo con un proveedor si
 - [ ] Integrar streaming simulado y comprobar estados visibles.
 - [ ] Añadir el proveedor validado y ejecutar AC-03.
 - [ ] Revisar aislamiento y credenciales; documentar comandos reales de desarrollo y pruebas.
+  Backend (2026-10-30): validación de `Host` contra *DNS rebinding* y CORS configurable, desactivado
+  por defecto. Falta la parte de desktop.
 - [ ] Registrar qué criterios pasan, cuáles no y cualquier limitación.
 
 ## Evidencia de cierre

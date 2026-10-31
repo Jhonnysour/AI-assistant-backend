@@ -59,7 +59,7 @@ def backend():
 
 @pytest.fixture
 def client(backend):
-    with TestClient(backend.app) as test_client:
+    with TestClient(base_url="http://127.0.0.1", app=backend.app) as test_client:
         yield test_client
 
 
@@ -86,7 +86,7 @@ def test_models_errors_follow_contract(code, status):
         async def list_models(self):
             raise CatalogUnavailable(code)
 
-    with TestClient(Backend(catalog=FailingCatalog()).app) as client:
+    with TestClient(base_url="http://127.0.0.1", app=Backend(catalog=FailingCatalog()).app) as client:
         response = client.get("/v1/models")
     assert response.status_code == status
     assert response.json()["error"]["code"] == code
@@ -159,14 +159,14 @@ def test_unexpected_error_is_internal_error_without_details(backend):
         async def list_models(self):
             raise RuntimeError("detalle-interno")
 
-    with TestClient(Backend(catalog=BrokenCatalog()).app, raise_server_exceptions=False) as client:
+    with TestClient(base_url="http://127.0.0.1", app=Backend(catalog=BrokenCatalog()).app, raise_server_exceptions=False) as client:
         response = client.get("/v1/models")
     assert response.status_code == 500
     assert response.json() == {"error": {"code": "internal_error", "message": "Error interno del asistente."}}
 
 
 def test_default_composition_uses_fake_provider():
-    with TestClient(app_from_settings(load_settings({}))) as client:
+    with TestClient(base_url="http://127.0.0.1", app=app_from_settings(load_settings({}))) as client:
         events = send(client, new_conversation(client))
     assert events[-1][0] == "response.completed"
 
@@ -309,8 +309,55 @@ def test_storage_unavailable_is_503_without_details(caplog):
             raise StorageUnavailable("ConnectionRefusedError")
 
     use_cases = build_use_cases(DownRepository(), FakeChatProvider(), FakeModelCatalog())
-    with TestClient(create_app(use_cases)) as client:
+    with TestClient(base_url="http://127.0.0.1", app=create_app(use_cases)) as client:
         response = client.get("/v1/conversations")
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "storage_unavailable"
     assert "ConnectionRefusedError" in caplog.text
+
+
+# --- Host y CORS ---
+
+@pytest.mark.parametrize("host", ["127.0.0.1:8000", "localhost:8000", "127.0.0.1", "LOCALHOST"])
+def test_local_host_names_are_accepted(backend, host):
+    with TestClient(base_url="http://127.0.0.1", app=backend.app) as client:
+        assert client.get("/v1/models", headers={"Host": host}).status_code == 200
+
+
+@pytest.mark.parametrize("host", ["evil.example:8000", "evil.example", "127.0.0.1.evil.example", "192.168.1.10"])
+def test_foreign_host_is_rejected_before_reaching_the_use_cases(backend, host):
+    """DNS rebinding: una web que resuelve su dominio a 127.0.0.1 sigue enviando su Host."""
+    with TestClient(base_url="http://127.0.0.1", app=backend.app) as client:
+        conversation_id = new_conversation(client)
+        created = client.post("/v1/conversations", headers={"Host": host})
+        sent = client.post(f"/v1/conversations/{conversation_id}/messages", headers={"Host": host},
+                           json={"model": "m", "text": "hola"})
+    assert (created.status_code, sent.status_code) == (400, 400)
+    assert backend.provider.calls == []
+    assert len(backend.repository._items) == 1
+
+
+def test_no_cors_headers_without_configured_origins(client):
+    response = client.options("/v1/conversations", headers={
+        "Origin": "http://localhost:5173", "Access-Control-Request-Method": "POST"})
+    assert "access-control-allow-origin" not in response.headers
+
+
+def test_cors_only_for_configured_origins():
+    backend = Backend()
+    app = create_app(backend.use_cases, cors_origins=["http://localhost:5173"])
+    preflight = {"Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "content-type"}
+    with TestClient(base_url="http://127.0.0.1", app=app) as client:
+        allowed = client.options("/v1/conversations", headers={"Origin": "http://localhost:5173", **preflight})
+        other = client.options("/v1/conversations", headers={"Origin": "https://evil.example", **preflight})
+        listed = client.get("/v1/conversations", headers={"Origin": "http://localhost:5173"})
+    assert allowed.status_code == 200
+    assert allowed.headers["access-control-allow-origin"] == "http://localhost:5173"
+    assert "access-control-allow-origin" not in other.headers
+    assert listed.headers["access-control-allow-origin"] == "http://localhost:5173"
+
+
+def test_cors_origins_come_from_settings():
+    settings = load_settings({"AI_ASSISTANT_CORS_ORIGINS": "http://localhost:5173, app://desktop"})
+    assert settings.cors_origins == ("http://localhost:5173", "app://desktop")
+    assert load_settings({}).cors_origins == ()
